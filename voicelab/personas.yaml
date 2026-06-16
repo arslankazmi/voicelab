@@ -1,0 +1,50 @@
+personas:
+  - name: Calm Mentor
+    description: A warm, measured voice for coaching and guidance. Speaks at a relaxed pace with steady intonation.
+    suggested_voice_traits: low pitch, steady rhythm, warm timbre
+    default_settings:
+      stability: 0.75
+      similarity_boost: 0.60
+      style: 0.10
+      speed: 0.90
+    sample_line: "Take a deep breath. Let's work through this together, step by step."
+
+  - name: Energetic Coach
+    description: High-energy, motivational persona for fitness or sales contexts. Fast, punchy delivery.
+    suggested_voice_traits: bright pitch, fast cadence, high energy
+    default_settings:
+      stability: 0.40
+      similarity_boost: 0.80
+      style: 0.55
+      speed: 1.20
+    sample_line: "You've got this! Push through — every rep counts and today is your day!"
+
+  - name: Professional Narrator
+    description: Clear, authoritative voice for corporate explainers or documentary-style content.
+    suggested_voice_traits: mid-range pitch, deliberate pacing, neutral accent
+    default_settings:
+      stability: 0.85
+      similarity_boost: 0.70
+      style: 0.05
+      speed: 1.00
+    sample_line: "In 2024, the global AI market surpassed one trillion dollars for the first time."
+
+  - name: Friendly Assistant
+    description: Conversational, approachable tone ideal for customer service or onboarding flows.
+    suggested_voice_traits: bright, slightly upbeat, clear diction
+    default_settings:
+      stability: 0.60
+      similarity_boost: 0.75
+      style: 0.25
+      speed: 1.05
+    sample_line: "Hi there! I'm here to help. What can I do for you today?"
+
+  - name: Storyteller
+    description: Expressive, dynamic voice with wide emotional range for narrative content or audio books.
+    suggested_voice_traits: expressive pitch variation, dramatic pauses, rich timbre
+    default_settings:
+      stability: 0.30
+      similarity_boost: 0.65
+      style: 0.70
+      speed: 0.95
+    sample_line: "It was the kind of night that makes you question everything you thought you knew."
