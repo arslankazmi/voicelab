@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>VoiceLab — ElevenLabs voice/persona playground</title>
+<meta name="description" content="Design, compare, and clone agent voices — an ElevenLabs playground with keyless system-TTS fallback." />
+<link rel="stylesheet" href="https://arslankazmi.github.io/ak-design/dist/catalog.css?v=1" />
+<style>
+  :root {
+    --accent: #a855f7;
+    --accent-2: #7c3aed;
+    --panel: var(--surface);
+    --panel2: var(--surface-2);
+    --line: var(--border);
+    --muted: var(--text-dim);
+    --dim: var(--text-faint);
+    --sans: var(--font-body);
+    --mono: "SFMono-Regular", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+    --violet: var(--accent);
+    --violet-2: var(--accent-2);
+    --green: #34d399;
+    --amber: #fbbf24;
+    --blue: #38bdf8;
+    --pink: #f472b6;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); line-height: 1.6; -webkit-font-smoothing: antialiased; }
+  a { color: var(--violet); text-decoration: none; } a:hover { text-decoration: underline; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 22px; }
+  section { padding: 54px 0; border-top: 1px solid var(--line); }
+  h1, h2, h3 { line-height: 1.25; margin: 0 0 .5em; }
+  h2 { font-size: 1.5rem; letter-spacing: -.01em; }
+  h2 .num { color: var(--violet); font-family: var(--mono); font-size: 1rem; margin-right: .5em; opacity: .8; }
+  h3 { font-size: 1.05rem; }
+  p { color: #c2cad6; }
+  code { font-family: var(--mono); font-size: .86em; background: #0e141d; border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; color: #cfe8ff; }
+  .muted { color: var(--muted); } .dim { color: var(--dim); }
+
+  /* hero */
+  .hero { padding: 70px 0 46px; border-top: none; text-align: center;
+    background: radial-gradient(900px 360px at 50% -120px, rgba(168,85,247,.18), transparent 70%); }
+  .hero-icon { width: 60px; height: 60px; margin: 0 auto 14px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(168,85,247,.28), transparent 65%);
+    border: 1px solid #3a2a5a; display: flex; align-items: center; justify-content: center;
+    font-size: 1.6rem; }
+  .hero h1 { font-size: 2.5rem; letter-spacing: -.02em; margin-bottom: .2em; }
+  .hero .tag { color: var(--muted); font-size: 1.12rem; max-width: 680px; margin: 0 auto 8px; }
+  .hero .pills { color: var(--dim); font-family: var(--mono); font-size: .82rem; margin-top: 6px; }
+  .cta { margin-top: 24px; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .btn { display: inline-block; padding: 9px 16px; border-radius: 9px; font-weight: 600; font-size: .92rem; border: 1px solid var(--line); }
+  .btn.primary { background: var(--violet); color: #fff; border-color: var(--violet); }
+  .btn.ghost { color: var(--text); }
+
+  /* badges */
+  .badges { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-top: 30px; }
+  .badge { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; min-width: 118px; text-align: center; }
+  .badge b { display: block; font-size: 1.5rem; font-family: var(--mono); color: #fff; line-height: 1.1; }
+  .badge span { font-size: .74rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+
+  /* cards */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 18px 16px; }
+  .card h3 { margin-top: 0; } .card p { font-size: .92rem; margin: .3em 0 0; color: #aeb8c6; }
+  .card .ic { font-size: 1.4rem; }
+
+  /* mermaid */
+  .diagram { background: var(--panel2); border: 1px solid var(--line); border-radius: 14px; padding: 14px; overflow: auto; }
+  .mermaid { text-align: center; }
+
+  /* terminal */
+  .term { background: #080c11; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; margin: 0; }
+  .term .bar { background: #0e141d; padding: 8px 12px; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: .74rem; color: var(--dim); display: flex; align-items: center; gap: 6px; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+  .dot.r { background: #ff5f56; } .dot.y { background: #ffbd2e; } .dot.g { background: #27c93f; }
+  .term .bar .ttl { margin-left: 8px; }
+  .term pre { margin: 0; padding: 14px 16px; overflow: auto; font-family: var(--mono); font-size: .82rem; line-height: 1.55; color: #cdd6e0; white-space: pre; }
+  .term .c-info { color: #6ea8d8; } .term .c-warn { color: var(--amber); } .term .c-ok { color: var(--green); }
+  .term .c-h { color: #fff; font-weight: 600; } .term .c-mut { color: var(--dim); } .term .c-acc { color: var(--violet); }
+
+  /* table */
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+  thead tr { border-bottom: 2px solid var(--line); }
+  th { text-align: left; padding: 8px 10px; color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; }
+  td { padding: 9px 10px; border-bottom: 1px solid var(--line); color: #c2cad6; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td code { font-size: .78em; }
+
+  /* tree */
+  .tree { background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; font-family: var(--mono); font-size: .82rem; line-height: 1.7; overflow: auto; white-space: pre; }
+  .tree .d { color: var(--violet); } .tree .ann { color: var(--dim); } .tree .star { color: var(--amber); }
+
+  /* keyless vs keyed */
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 600px) { .two-col { grid-template-columns: 1fr; } }
+  .mode-card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+  .mode-card h3 { margin-top: 0; }
+  .mode-card ul { margin: .5em 0 0; padding-left: 1.2em; color: #aeb8c6; font-size: .9rem; }
+  .mode-card ul li { margin-bottom: .3em; }
+  .mode-card .note { margin-top: 10px; font-size: .83rem; color: var(--muted); border-left: 2px solid var(--line); padding-left: 10px; }
+  .mode-card .note b { color: var(--amber); }
+
+  footer { border-top: 1px solid var(--line); padding: 34px 0 60px; color: var(--muted); font-size: .85rem; }
+  .foot-grid { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+  ::selection { background: rgba(168,85,247,.3); }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="hero-icon">🎙</div>
+    <h1>VoiceLab</h1>
+    <p class="tag">Design, compare, and clone agent voices — an ElevenLabs playground</p>
+    <p class="pills">Gradio UI · FastAPI backend · keyless system-TTS fallback · 5 persona presets</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/arslankazmi/voicelab">View on GitHub</a>
+      <a class="btn ghost" href="#architecture">How it works</a>
+      <a class="btn ghost" href="#quickstart">Quickstart</a>
+    </div>
+    <div class="badges">
+      <div class="badge"><b>17</b><span>tests</span></div>
+      <div class="badge"><b>Python</b><span>3.12+</span></div>
+      <div class="badge"><b>ElevenLabs</b><span>optional cloud</span></div>
+      <div class="badge"><b>keyless</b><span>fallback</span></div>
+    </div>
+  </div>
+</header>
+
+<!-- WHAT IT DOES -->
+<section id="what">
+  <div class="wrap">
+    <h2><span class="num">01</span>What it does</h2>
+    <p>VoiceLab is a local Gradio + FastAPI playground for designing, auditing, and comparing ElevenLabs voice personas. You get a real UI for tuning stability, similarity boost, style, and speed — without writing a line of Python. The same codebase works without any API key: <code>LocalTts</code> uses the system's pyttsx3 engine so you can develop and run tests in CI with zero cloud credentials.</p>
+    <div class="grid">
+      <div class="card"><div class="ic">🎛</div><h3>Design a persona</h3><p>Pick from five built-in presets (or start blank) and dial in stability, similarity boost, style, and speed. Hear the result instantly.</p></div>
+      <div class="card"><div class="ic">⚖️</div><h3>Compare two voices</h3><p>Side-by-side compare tab synthesizes the same text through Voice A and Voice B simultaneously, with independent persona and settings per side.</p></div>
+      <div class="card"><div class="ic">🔑</div><h3>Key-gated cloud features</h3><p>Set <code>ELEVENLABS_API_KEY</code> to unlock live ElevenLabs synthesis and the Voice Cloning tab. Without it, system TTS keeps everything running.</p></div>
+      <div class="card"><div class="ic">🧪</div><h3>17 tests, keyless</h3><p>All 17 tests run without an ElevenLabs key or audio hardware — backends degrade gracefully, so CI never needs credentials.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ARCHITECTURE -->
+<section id="architecture">
+  <div class="wrap">
+    <h2><span class="num">02</span>Architecture</h2>
+    <p>The engine is the single decision point: it reads <code>ELEVENLABS_API_KEY</code> and returns either <code>ElevenLabsTts</code> or <code>LocalTts</code>. Gradio is mounted on FastAPI at <code>/</code>; the health endpoint at <code>/healthz</code> reports the active backend.</p>
+    <div class="diagram">
+      <pre class="mermaid">
+flowchart TD
+    text["text input"] --> engine["engine.get_tts()"]
+    persona["persona preset"] --> settings["voice settings\nstability · similarity_boost · style · speed"]
+    voice["voice id / name"] --> engine
+    settings --> engine
+
+    engine -->|"ELEVENLABS_API_KEY present\n+ elevenlabs pkg"| el["ElevenLabsTts\ntts/elevenlabs.py"]
+    engine -->|"no key or pkg missing"| loc["LocalTts\ntts/local.py\n(pyttsx3 system TTS)"]
+
+    el --> audio_a["MP3 bytes"]
+    loc --> audio_b["WAV bytes or None"]
+
+    audio_a --> ui["Gradio UI\napp/main.py"]
+    audio_b --> ui
+
+    subgraph compare["Compare path"]
+      direction LR
+      va["Voice A\n+ persona A"] --> synth_a["synthesize"]
+      vb["Voice B\n+ persona B"] --> synth_b["synthesize"]
+    end
+
+    ui -->|"Compare tab"| compare
+    compare --> side["audio A · audio B\nside by side"]
+
+    banner["backend banner\nActive: ElevenLabs | Local"] --> ui
+
+    classDef cloud fill:#7c3aed33,stroke:#a855f7,color:#e9d5ff;
+    classDef local fill:#34d39933,stroke:#34d399,color:#d6fff0;
+    classDef ui fill:#1f6feb33,stroke:#38bdf8,color:#dbe9ff;
+    class el cloud;
+    class loc local;
+    class ui ui;
+      </pre>
+    </div>
+    <details style="margin-top:16px;">
+      <summary style="cursor:pointer; color:var(--muted); font-size:.85rem;">ASCII fallback diagram</summary>
+      <div class="term" style="margin-top:10px;">
+        <pre>
+text + persona + settings
+         |
+         v
+   engine.get_tts()
+    /             \
+key present?    no key / pkg missing
+    |                    |
+ElevenLabsTts        LocalTts
+(cloud, MP3)       (pyttsx3, WAV)
+    \                    /
+         Gradio UI
+       /           \
+  Synthesize     Compare
+  (single)     (A vs B, side by side)
+                |
+           Voice Cloning tab
+           (cloud only — gated)
+        </pre>
+      </div>
+    </details>
+  </div>
+</section>
+
+<!-- PERSONAS -->
+<section id="personas">
+  <div class="wrap">
+    <h2><span class="num">03</span>Personas</h2>
+    <p>Five presets ship in <code>voicelab/personas.yaml</code>. Selecting one auto-fills the sliders and prefills the text box with its sample line. All settings are editable after load.</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Description</th>
+          <th>Stability</th>
+          <th>Similarity</th>
+          <th>Style</th>
+          <th>Speed</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><b>Calm Mentor</b></td>
+          <td>Warm, measured coaching voice. Relaxed pace, steady intonation.</td>
+          <td><code>0.75</code></td>
+          <td><code>0.60</code></td>
+          <td><code>0.10</code></td>
+          <td><code>0.90</code></td>
+        </tr>
+        <tr>
+          <td><b>Energetic Coach</b></td>
+          <td>High-energy, motivational delivery for fitness or sales contexts.</td>
+          <td><code>0.40</code></td>
+          <td><code>0.80</code></td>
+          <td><code>0.55</code></td>
+          <td><code>1.20</code></td>
+        </tr>
+        <tr>
+          <td><b>Professional Narrator</b></td>
+          <td>Clear, authoritative voice for corporate explainers or documentary content.</td>
+          <td><code>0.85</code></td>
+          <td><code>0.70</code></td>
+          <td><code>0.05</code></td>
+          <td><code>1.00</code></td>
+        </tr>
+        <tr>
+          <td><b>Friendly Assistant</b></td>
+          <td>Conversational, approachable tone for customer service or onboarding.</td>
+          <td><code>0.60</code></td>
+          <td><code>0.75</code></td>
+          <td><code>0.25</code></td>
+          <td><code>1.05</code></td>
+        </tr>
+        <tr>
+          <td><b>Storyteller</b></td>
+          <td>Expressive, dynamic voice with wide emotional range for narrative content.</td>
+          <td><code>0.30</code></td>
+          <td><code>0.65</code></td>
+          <td><code>0.70</code></td>
+          <td><code>0.95</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- KEYLESS VS KEYED -->
+<section id="keyless">
+  <div class="wrap">
+    <h2><span class="num">04</span>Keyless vs keyed</h2>
+    <p>The engine selects a backend at startup based on the presence of <code>ELEVENLABS_API_KEY</code> in the environment (or a <code>.env</code> file). The Gradio header always shows the active backend so there is no ambiguity.</p>
+    <div class="two-col">
+      <div class="mode-card">
+        <h3>Keyless (default)</h3>
+        <ul>
+          <li>Synthesize tab: system TTS via pyttsx3 (WAV)</li>
+          <li>Compare tab: both voices via pyttsx3</li>
+          <li>Voice list: system voices (or stub if pyttsx3 unavailable)</li>
+          <li>Backend banner: <em>"Local system TTS (pyttsx3 fallback)"</em></li>
+          <li>All 17 tests pass — no audio hardware needed in CI</li>
+        </ul>
+        <div class="note">Voice Cloning tab shows a setup guide instead of the clone UI. <b>Nothing breaks</b> — it degrades with a clear message.</div>
+      </div>
+      <div class="mode-card">
+        <h3>Keyed (cloud)</h3>
+        <ul>
+          <li>Synthesize tab: ElevenLabs cloud TTS (MP3, <code>eleven_multilingual_v2</code>)</li>
+          <li>Compare tab: both voices via ElevenLabs API</li>
+          <li>Voice list: all voices from your ElevenLabs account</li>
+          <li>Backend banner: <em>"ElevenLabs (cloud)"</em></li>
+          <li>Voice Cloning tab: enabled (stub implementation; <b>requires Professional plan</b>)</li>
+        </ul>
+        <div class="note"><b>Note:</b> Voice cloning is a gated stub — it calls the ElevenLabs API but does not implement full error recovery or file validation. Requires an ElevenLabs Professional plan or higher.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- QUICKSTART -->
+<section id="quickstart">
+  <div class="wrap">
+    <h2><span class="num">05</span>Quickstart</h2>
+    <p>You need Python 3.12+ and <a href="https://docs.astral.sh/uv/">uv</a>.</p>
+    <div class="term">
+      <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="ttl">terminal</span></div>
+      <pre><span class="c-mut"># clone and install (base deps — no ElevenLabs key needed)</span>
+<span class="c-h">git clone https://github.com/arslankazmi/voicelab &amp;&amp; cd voicelab</span>
+<span class="c-h">uv sync</span>
+
+<span class="c-mut"># serve (keyless mode — system TTS fallback)</span>
+<span class="c-h">uv run voicelab serve --port 8001</span>
+<span class="c-info"># open http://localhost:8001</span>
+
+<span class="c-mut"># to unlock ElevenLabs cloud synthesis:</span>
+<span class="c-h">uv sync --extra cloud</span>
+<span class="c-h">export ELEVENLABS_API_KEY=your_key_here</span>
+<span class="c-h">uv run voicelab serve --port 8001</span>
+
+<span class="c-mut"># run tests (no key or audio hardware needed)</span>
+<span class="c-h">uv run pytest</span>
+<span class="c-ok">17 passed</span></pre>
+    </div>
+  </div>
+</section>
+
+<!-- CODE LAYOUT -->
+<section id="layout">
+  <div class="wrap">
+    <h2><span class="num">06</span>Code layout</h2>
+    <div class="tree"><span class="dim">voicelab/</span>
+├─ <span class="d">voicelab/</span>
+│  ├─ <span class="d">app/</span>
+│  │  └─ main.py                  <span class="ann"># FastAPI factory — mounts Gradio at /, /healthz</span>
+│  ├─ <span class="d">tts/</span>
+│  │  ├─ elevenlabs.py            <span class="star"># ElevenLabsTts — cloud backend (key-gated)</span>
+│  │  └─ local.py                 <span class="ann"># LocalTts — pyttsx3 system-TTS fallback</span>
+│  ├─ <span class="d">config/</span>
+│  │  └─ settings.py              <span class="ann"># pydantic-settings — reads ELEVENLABS_API_KEY + port</span>
+│  ├─ engine.py                   <span class="star"># get_tts() · synthesize_one() · compare()</span>
+│  ├─ personas.py                 <span class="ann"># Persona dataclass + load_personas() from YAML</span>
+│  ├─ personas.yaml               <span class="star"># 5 built-in persona presets</span>
+│  ├─ contracts.py                <span class="ann"># Tts protocol (structural typing)</span>
+│  └─ cli.py                      <span class="ann"># voicelab serve --port</span>
+├─ <span class="d">tests/</span>
+│  ├─ test_engine.py              <span class="ann"># engine routing + synthesize_one + compare</span>
+│  ├─ test_personas.py            <span class="ann"># persona loading + settings validation</span>
+│  └─ test_smoke.py               <span class="ann"># FastAPI /healthz smoke test</span>
+├─ pyproject.toml                 <span class="ann"># uv project — elevenlabs in [cloud] extra</span>
+└─ config.yaml                    <span class="ann"># optional local config overrides</span></div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <b>VoiceLab</b><br>
+        <span class="dim">ElevenLabs voice/persona playground &mdash; MIT License</span>
+      </div>
+      <div>
+        <a href="https://github.com/arslankazmi/voicelab">GitHub &rarr; arslankazmi/voicelab</a><br>
+        <a href="https://arslankazmi.github.io/portfolio/">&larr; Catalog</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "dark", darkMode: true });
+</script>
+</body>
+</html>
