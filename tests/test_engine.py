@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import shutil
+import sys
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from voicelab.tts.local import LocalTts
 
@@ -87,15 +91,16 @@ def test_local_tts_synthesize_with_pyttsx3_mocked():
 
 
 def test_local_tts_synthesize_without_pyttsx3_returns_none():
-    """If pyttsx3 is unavailable, synthesize returns None and does not raise."""
+    """If pyttsx3 is unavailable AND say fallback is disabled, synthesize returns None."""
     import voicelab.tts.local as local_mod
 
     local_mod._PYTTSX3_AVAILABLE = None  # reset
 
     with patch.dict("sys.modules", {"pyttsx3": None}):
         local_mod._PYTTSX3_AVAILABLE = None
-        tts = LocalTts()
-        result = tts.synthesize("hello", "default", {})
+        with patch("voicelab.tts.local._say_available", return_value=False):
+            tts = LocalTts()
+            result = tts.synthesize("hello", "default", {})
 
     assert result is None
 
@@ -172,7 +177,8 @@ def test_compare_returns_two_entries():
 
     from voicelab.engine import compare
 
-    results = compare("hello world", ["voice_a", "voice_b"], {}, tts=tts)
+    with patch("voicelab.tts.local._say_available", return_value=False):
+        results = compare("hello world", ["voice_a", "voice_b"], {}, tts=tts)
     assert len(results) == 2
     labels = [r[0] for r in results]
     assert "voice_a" in labels
@@ -181,3 +187,64 @@ def test_compare_returns_two_entries():
     for label, audio in results:
         assert isinstance(label, str)
         assert audio is None or isinstance(audio, bytes)
+
+
+# ---------------------------------------------------------------------------
+# macOS say fallback — mock-based (platform-independent)
+# ---------------------------------------------------------------------------
+
+
+def test_local_tts_say_fallback_mock():
+    """When pyttsx3 absent + _say_available True, synthesize delegates to _synthesize_via_say."""
+    import voicelab.tts.local as local_mod
+
+    local_mod._PYTTSX3_AVAILABLE = None  # reset
+
+    fake_wav = b"RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00"
+
+    with patch.dict("sys.modules", {"pyttsx3": None}):
+        local_mod._PYTTSX3_AVAILABLE = None
+        with patch("voicelab.tts.local._say_available", return_value=True):
+            with patch("voicelab.tts.local._synthesize_via_say", return_value=fake_wav) as mock_say:
+                tts = LocalTts()
+                result = tts.synthesize("hello", "default", {})
+
+    assert result == fake_wav
+    mock_say.assert_called_once()
+
+
+def test_local_tts_list_voices_with_say_fallback():
+    """list_voices() returns macOS say stub when pyttsx3 absent + say available."""
+    import voicelab.tts.local as local_mod
+
+    local_mod._PYTTSX3_AVAILABLE = None
+
+    with patch.dict("sys.modules", {"pyttsx3": None}):
+        local_mod._PYTTSX3_AVAILABLE = None
+        with patch("voicelab.tts.local._say_available", return_value=True):
+            tts = LocalTts()
+            voices = tts.list_voices()
+
+    assert isinstance(voices, list)
+    assert len(voices) == 1
+    assert voices[0]["id"] == "default"
+    assert "macOS say" in voices[0]["name"]
+    assert voices[0].get("category") == "local"
+
+
+@pytest.mark.skipif(
+    not (
+        sys.platform == "darwin"
+        and shutil.which("say") is not None
+        and shutil.which("afconvert") is not None
+    ),
+    reason="macOS say/afconvert not available",
+)
+def test_local_tts_say_fallback_real():
+    """Real macOS say synthesis: must return non-empty WAV bytes (RIFF header)."""
+    from voicelab.tts.local import _synthesize_via_say
+
+    result = _synthesize_via_say("Hello", {"speed": 1.0})
+    assert result is not None, "Expected WAV bytes from say fallback, got None"
+    assert len(result) > 0, "Expected non-empty WAV bytes"
+    assert result[:4] == b"RIFF", f"Expected RIFF WAV header, got {result[:4]!r}"

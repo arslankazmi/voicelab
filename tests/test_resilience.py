@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import sys
 import time
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -205,7 +205,9 @@ class TestElevenLabsTtsResilient:
 
         fake_el.text_to_speech.convert.side_effect = convert_side_effect
 
-        with patch.dict(sys.modules, {"elevenlabs": fake_sdk, "elevenlabs.client": fake_sdk.client}):
+        with patch.dict(
+            sys.modules, {"elevenlabs": fake_sdk, "elevenlabs.client": fake_sdk.client}
+        ):
             result = tts.synthesize("hello", "voice_id_1", {})
 
         assert result == fake_chunk
@@ -218,7 +220,9 @@ class TestElevenLabsTtsResilient:
 
         fake_el.text_to_speech.convert.side_effect = TimeoutError("always")
 
-        with patch.dict(sys.modules, {"elevenlabs": fake_sdk, "elevenlabs.client": fake_sdk.client}):
+        with patch.dict(
+            sys.modules, {"elevenlabs": fake_sdk, "elevenlabs.client": fake_sdk.client}
+        ):
             result = tts.synthesize("hello", "voice_id_1", {})
 
         assert result is None  # graceful degradation, never raises
@@ -234,7 +238,9 @@ class TestElevenLabsTtsResilient:
         fake_el.text_to_speech.convert.side_effect = lambda **_: time.sleep(10)
 
         start = time.monotonic()
-        with patch.dict(sys.modules, {"elevenlabs": fake_sdk, "elevenlabs.client": fake_sdk.client}):
+        with patch.dict(
+            sys.modules, {"elevenlabs": fake_sdk, "elevenlabs.client": fake_sdk.client}
+        ):
             result = tts.synthesize("hello", "voice_id", {})
         elapsed = time.monotonic() - start
 
@@ -298,9 +304,6 @@ class TestTtsMetrics:
         incremented = []
         observed = []
 
-        original_labels_calls = tts_calls_total.labels
-        original_latency_labels = tts_latency_seconds.labels
-
         class CapturingCounter:
             def __init__(self, backend, outcome):
                 self.backend = backend
@@ -317,10 +320,13 @@ class TestTtsMetrics:
             def observe(self, val):
                 observed.append((self.backend, self.outcome, val))
 
-        with patch.object(
-            tts_calls_total, "labels", side_effect=lambda **kw: CapturingCounter(**kw)
-        ), patch.object(
-            tts_latency_seconds, "labels", side_effect=lambda **kw: CapturingHistogram(**kw)
+        with (
+            patch.object(
+                tts_calls_total, "labels", side_effect=lambda **kw: CapturingCounter(**kw)
+            ),
+            patch.object(
+                tts_latency_seconds, "labels", side_effect=lambda **kw: CapturingHistogram(**kw)
+            ),
         ):
             with patch.dict(
                 sys.modules,
@@ -360,9 +366,12 @@ class TestTtsMetrics:
             def observe(self, val):
                 pass
 
-        with patch.object(
-            tts_calls_total, "labels", side_effect=lambda **kw: CapturingCounter(**kw)
-        ), patch.object(tts_latency_seconds, "labels", return_value=CapturingHistogram()):
+        with (
+            patch.object(
+                tts_calls_total, "labels", side_effect=lambda **kw: CapturingCounter(**kw)
+            ),
+            patch.object(tts_latency_seconds, "labels", return_value=CapturingHistogram()),
+        ):
             with patch.dict(
                 sys.modules,
                 {"elevenlabs": fake_sdk, "elevenlabs.client": fake_sdk.client},

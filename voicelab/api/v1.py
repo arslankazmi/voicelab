@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from voicelab.auth import require_auth
 from voicelab.config.settings import get_settings
-from voicelab.engine import get_tts
+from voicelab.engine import audio_media_type, get_tts
 from voicelab.personas import load_personas
 
 logger = logging.getLogger(__name__)
@@ -131,7 +131,7 @@ async def list_personas(request: Request) -> dict[str, Any]:
 @router.post("/synthesize")
 @_limit("10/minute")
 async def synthesize(request: Request, body: SynthesizeRequest) -> StreamingResponse:
-    """Synthesize text to audio and stream the raw MP3 bytes."""
+    """Synthesize text to audio and stream bytes (WAV for local, MP3 for ElevenLabs)."""
     tts = get_tts()
     audio_bytes = tts.synthesize(
         body.text,
@@ -143,7 +143,7 @@ async def synthesize(request: Request, body: SynthesizeRequest) -> StreamingResp
 
     return StreamingResponse(
         iter([audio_bytes]),
-        media_type="audio/mpeg",
+        media_type=audio_media_type(tts),
     )
 
 

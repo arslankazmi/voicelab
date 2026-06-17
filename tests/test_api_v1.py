@@ -96,6 +96,20 @@ async def test_synthesize_returns_audio_local_fallback(client, local_tts_stub):
 
 
 @pytest.mark.asyncio
+async def test_synthesize_local_returns_wav_media_type(client, local_tts_stub):
+    """Local backend (no ElevenLabs key) must advertise audio/wav, not audio/mpeg."""
+    resp = await client.post(
+        "/api/v1/synthesize",
+        json={"text": "Hello world", "voice": "default"},
+    )
+    assert resp.status_code == 200
+    content_type = resp.headers["content-type"]
+    assert "audio/wav" in content_type, (
+        f"Expected audio/wav for local backend, got {content_type!r}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_synthesize_text_too_long(client):
     resp = await client.post(
         "/api/v1/synthesize",

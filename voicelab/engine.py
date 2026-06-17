@@ -58,6 +58,20 @@ def synthesize_one(
     return tts.synthesize(text, voice, settings)
 
 
+def audio_media_type(tts: Tts | None = None) -> str:
+    """Return the MIME type produced by *tts* (or the default backend).
+
+    LocalTts produces WAV; ElevenLabsTts produces MP3.
+    """
+    from voicelab.tts.local import LocalTts  # noqa: PLC0415
+
+    if tts is None:
+        tts = get_tts()
+    if isinstance(tts, LocalTts):
+        return "audio/wav"
+    return "audio/mpeg"
+
+
 def compare(
     text: str,
     voices: list[str],
