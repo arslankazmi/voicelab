@@ -18,14 +18,18 @@ from httpx import ASGITransport, AsyncClient
 
 @pytest.fixture
 def local_tts_stub():
-    """Patch LocalTts.synthesize to return minimal WAV bytes."""
+    """Patch registry to return LocalTts and stub LocalTts.synthesize."""
+    from voicelab.tts.local import LocalTts
+
     # Minimal valid WAV header for testing (split to keep line-length clean)
     fake_wav = (
         b"RIFF$\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00"
         b"\x80>\x00\x00\x00}\x00\x00\x02\x00\x10\x00data\x00\x00\x00\x00"
     )
-    with patch("voicelab.tts.local.LocalTts.synthesize", return_value=fake_wav):
-        yield fake_wav
+    _local = LocalTts()
+    with patch("voicelab.tts.registry.get_tts_for_engine", return_value=_local):
+        with patch("voicelab.tts.local.LocalTts.synthesize", return_value=fake_wav):
+            yield fake_wav
 
 
 @pytest.fixture

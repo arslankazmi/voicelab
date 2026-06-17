@@ -15,8 +15,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from voicelab.auth import require_auth
 from voicelab.config.settings import get_settings
-from voicelab.engine import audio_media_type, get_tts
+from voicelab.engine import audio_media_type, compare_across_engines
 from voicelab.personas import load_personas
+from voicelab.tts.registry import list_backends
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,7 @@ class SynthesizeRequest(BaseModel):
 
     text: str = Field(max_length=5000)
     voice: str = "default"
+    engine: str = "auto"
     settings: VoiceSettings = Field(default_factory=VoiceSettings)
 
 
@@ -82,6 +84,25 @@ class CompareRequest(BaseModel):
     text: str = Field(max_length=5000)
     voice_a: str = "default"
     voice_b: str = "default"
+    engine_a: str = "auto"
+    engine_b: str = "auto"
+    settings: VoiceSettings = Field(default_factory=VoiceSettings)
+
+
+class EngineVoicePair(BaseModel):
+    """An (engine, voice) pair for cross-engine comparison."""
+
+    engine: str = "auto"
+    voice: str = "default"
+
+
+class CrossCompareRequest(BaseModel):
+    """Compare the same text across multiple (engine, voice) pairs."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    text: str = Field(max_length=5000)
+    pairs: list[EngineVoicePair] = Field(min_length=1, max_length=6)
     settings: VoiceSettings = Field(default_factory=VoiceSettings)
 
 
@@ -97,17 +118,37 @@ router = APIRouter(
 
 
 # ---------------------------------------------------------------------------
+# GET /api/v1/engines
+# ---------------------------------------------------------------------------
+
+
+@router.get("/engines")
+@_limit("60/minute")
+async def list_engines(request: Request) -> dict[str, Any]:
+    """List all TTS backends with availability status."""
+    settings = get_settings()
+    backends = list_backends(api_key=settings.elevenlabs_api_key)
+    return {"engines": backends, "active": settings.tts_engine}
+
+
+# ---------------------------------------------------------------------------
 # GET /api/v1/voices
 # ---------------------------------------------------------------------------
 
 
 @router.get("/voices")
 @_limit("60/minute")
-async def list_voices(request: Request) -> dict[str, Any]:
-    """Return available voices from the active TTS backend."""
-    tts = get_tts()
+async def list_voices(request: Request, engine: str = "auto") -> dict[str, Any]:
+    """Return available voices from the requested TTS backend.
+
+    Pass ``?engine=kokoro`` (or piper/elevenlabs/local) to query a specific backend.
+    """
+    from voicelab.tts.registry import get_tts_for_engine  # noqa: PLC0415
+
+    settings = get_settings()
+    tts = get_tts_for_engine(engine, api_key=settings.elevenlabs_api_key)
     voices = tts.list_voices()
-    return {"voices": voices}
+    return {"voices": voices, "engine": engine}
 
 
 # ---------------------------------------------------------------------------
@@ -131,8 +172,11 @@ async def list_personas(request: Request) -> dict[str, Any]:
 @router.post("/synthesize")
 @_limit("10/minute")
 async def synthesize(request: Request, body: SynthesizeRequest) -> StreamingResponse:
-    """Synthesize text to audio and stream bytes (WAV for local, MP3 for ElevenLabs)."""
-    tts = get_tts()
+    """Synthesize text to audio (WAV for local/kokoro/piper; MP3 for ElevenLabs)."""
+    from voicelab.tts.registry import get_tts_for_engine  # noqa: PLC0415
+
+    settings = get_settings()
+    tts = get_tts_for_engine(body.engine, api_key=settings.elevenlabs_api_key)
     audio_bytes = tts.synthesize(
         body.text,
         body.voice,
@@ -155,16 +199,52 @@ async def synthesize(request: Request, body: SynthesizeRequest) -> StreamingResp
 @router.post("/compare")
 @_limit("60/minute")
 async def compare(request: Request, body: CompareRequest) -> dict[str, Any]:
-    """Synthesize text with two voices; return base64-encoded audio for each."""
-    tts = get_tts()
+    """Synthesize text with two (engine, voice) pairs; return base64-encoded audio."""
+    from voicelab.tts.registry import get_tts_for_engine  # noqa: PLC0415
+
+    settings = get_settings()
     settings_dict = body.settings.model_dump()
 
-    audio_a = tts.synthesize(body.text, body.voice_a, settings_dict)
-    audio_b = tts.synthesize(body.text, body.voice_b, settings_dict)
+    tts_a = get_tts_for_engine(body.engine_a, api_key=settings.elevenlabs_api_key)
+    tts_b = get_tts_for_engine(body.engine_b, api_key=settings.elevenlabs_api_key)
+
+    audio_a = tts_a.synthesize(body.text, body.voice_a, settings_dict)
+    audio_b = tts_b.synthesize(body.text, body.voice_b, settings_dict)
 
     return {
         "voice_a": base64.b64encode(audio_a).decode() if audio_a is not None else None,
         "voice_b": base64.b64encode(audio_b).decode() if audio_b is not None else None,
+        "engine_a": body.engine_a,
+        "engine_b": body.engine_b,
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/cross-compare
+# ---------------------------------------------------------------------------
+
+
+@router.post("/cross-compare")
+@_limit("10/minute")
+async def cross_compare(request: Request, body: CrossCompareRequest) -> dict[str, Any]:
+    """Synthesize text across multiple (engine, voice) pairs for cross-engine comparison."""
+    app_settings = get_settings()
+    pairs = [(p.engine, p.voice) for p in body.pairs]
+    results = compare_across_engines(
+        body.text,
+        pairs,
+        body.settings.model_dump(),
+        app_settings=app_settings,
+    )
+    return {
+        "results": [
+            {
+                "engine": engine,
+                "voice": voice,
+                "audio": base64.b64encode(audio).decode() if audio is not None else None,
+            }
+            for engine, voice, audio in results
+        ]
     }
 
 

@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:8001"]
     auth_token: str | None = None
 
+    # TTS engine selection — "auto" | "elevenlabs" | "kokoro" | "piper" | "local"
+    tts_engine: str = "auto"
+
     # API keys — all Optional so the app boots without secrets
     elevenlabs_api_key: str | None = None
 

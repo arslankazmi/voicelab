@@ -15,27 +15,55 @@ from voicelab.tts.local import LocalTts
 # ---------------------------------------------------------------------------
 
 
-def test_get_tts_keyless_returns_local_tts():
+def test_get_tts_keyless_returns_non_cloud_backend():
+    """Without an API key, get_tts() must return a local (non-ElevenLabs) backend."""
     from voicelab.engine import get_tts
+    from voicelab.tts.elevenlabs import ElevenLabsTts
 
     tts = get_tts()
+    # Must not be ElevenLabs since no key is set
+    assert not isinstance(tts, ElevenLabsTts)
+    # Must be some Tts implementor (LocalTts or KokoroTts or PiperTts)
+    from voicelab.contracts import Tts
+
+    assert isinstance(tts, Tts)
+
+
+def test_get_tts_keyless_returns_local_tts_when_no_local_packages():
+    """When neither kokoro nor piper is available, fall back to LocalTts."""
+    import voicelab.tts.registry as registry_mod
+    from voicelab.engine import get_tts
+
+    original_is_available = registry_mod.is_available
+
+    def mock_is_available(info, *, api_key=None):
+        if info.name in ("kokoro", "piper", "elevenlabs"):
+            return False
+        return original_is_available(info, api_key=api_key)
+
+    with patch.object(registry_mod, "is_available", side_effect=mock_is_available):
+        tts = get_tts()
     assert isinstance(tts, LocalTts)
 
 
-def test_get_tts_with_key_but_no_sdk_falls_back_to_local(monkeypatch):
-    """If elevenlabs SDK is not installed, fall back to LocalTts silently."""
+def test_get_tts_with_key_but_no_sdk_falls_back_to_non_cloud(monkeypatch):
+    """If elevenlabs SDK is not installed, fall back to a local backend."""
     import voicelab.config.settings as settings_mod
 
     settings_mod._settings = None
     monkeypatch.setenv("ELEVENLABS_API_KEY", "fake-key-xyz")
     settings_mod._settings = None  # force re-read
 
+    from voicelab.contracts import Tts
     from voicelab.engine import get_tts
+    from voicelab.tts.elevenlabs import ElevenLabsTts
 
     # Patch the import inside ElevenLabsTts.__init__ to raise ImportError
     with patch.dict("sys.modules", {"elevenlabs": None, "elevenlabs.client": None}):
         tts = get_tts()
-    assert isinstance(tts, LocalTts)
+    # Should fall back to kokoro or local — NOT elevenlabs
+    assert not isinstance(tts, ElevenLabsTts)
+    assert isinstance(tts, Tts)
 
 
 # ---------------------------------------------------------------------------

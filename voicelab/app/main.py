@@ -23,10 +23,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from voicelab.api.v1 import limiter as api_limiter
 from voicelab.api.v1 import router as api_v1_router
 from voicelab.config.settings import get_settings
-from voicelab.engine import get_tts, synthesize_one
+from voicelab.engine import compare_across_engines
 from voicelab.logging_config import configure_logging
 from voicelab.middleware import RequestIDMiddleware
 from voicelab.personas import get_persona, load_personas
+from voicelab.tts.registry import get_tts_for_engine, list_backends
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,8 @@ async def _lifespan(app: FastAPI):
 # Backend banner helpers
 # ---------------------------------------------------------------------------
 
+_ENGINE_CHOICES: list[str] = ["auto", "elevenlabs", "kokoro", "piper", "local"]
+
 
 def _backend_label() -> str:
     settings = get_settings()
@@ -50,13 +53,19 @@ def _backend_label() -> str:
 
 
 def _backend_banner_md() -> str:
-    label = _backend_label()
-    if label == "ElevenLabs":
-        return "**Active backend:** ElevenLabs (cloud) ✓"
-    return (
-        "**Active backend:** Local system TTS (pyttsx3 fallback) — "
-        "set `ELEVENLABS_API_KEY` to unlock cloud voices."
-    )
+    """Return Markdown banner showing available backends."""
+    settings = get_settings()
+    backends = list_backends(api_key=settings.elevenlabs_api_key)
+
+    lines = ["**Available TTS backends:**"]
+    for b in backends:
+        status = "✓ available" if b["available"] else "✗ not installed"
+        lines.append(f"- **{b['name']}** — {status} ({b['license']})")
+
+    lines.append("")
+    active = getattr(settings, "tts_engine", "auto")
+    lines.append(f"_Active engine setting: `{active}`. Set `TTS_ENGINE=kokoro` etc. in `.env`._")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -64,14 +73,15 @@ def _backend_banner_md() -> str:
 # ---------------------------------------------------------------------------
 
 
-def _get_voices() -> list[str]:
-    """Return list of voice names/ids from the active backend."""
+def _get_voices(engine: str = "auto") -> list[str]:
+    """Return list of voice names/ids from the specified backend."""
     try:
-        tts = get_tts()
+        settings = get_settings()
+        tts = get_tts_for_engine(engine, api_key=settings.elevenlabs_api_key)
         voices = tts.list_voices()
         return [v.get("name") or v.get("id", "default") for v in voices] or ["default"]
     except Exception:
-        logger.warning("Could not list voices", exc_info=True)
+        logger.warning("Could not list voices for engine=%r", engine, exc_info=True)
         return ["default"]
 
 
@@ -92,12 +102,37 @@ def _mp3_bytes_to_temp_path(audio_bytes: bytes, prefix: str = "voicelab_") -> st
 # ---------------------------------------------------------------------------
 
 
+def _bytes_to_audio_gradio(audio_bytes: bytes | None):  # noqa: ANN201
+    """Convert audio bytes to Gradio-compatible format (numpy tuple or temp filepath)."""
+    if audio_bytes is None:
+        return None
+    import wave  # noqa: PLC0415
+
+    import numpy as np  # noqa: PLC0415
+
+    try:
+        with wave.open(io.BytesIO(audio_bytes), "rb") as wf:
+            sr = wf.getframerate()
+            raw = wf.readframes(wf.getnframes())
+            nc = wf.getnchannels()
+            sw = wf.getsampwidth()
+            dtype = np.int16 if sw == 2 else np.uint8
+            arr = np.frombuffer(raw, dtype=dtype).astype(np.int16)
+            if nc == 2:
+                arr = arr[::2]
+        return (sr, arr)
+    except Exception:
+        # MP3 or unknown format — write to temp file
+        return _mp3_bytes_to_temp_path(audio_bytes, prefix="voicelab_audio_")
+
+
 def _build_gradio_ui() -> gr.Blocks:
     """Construct the Gradio Blocks UI."""
     personas = load_personas()
     persona_names = [p.name for p in personas]
-    voice_choices = _get_voices()
-    is_cloud = get_settings().elevenlabs_api_key is not None
+    settings = get_settings()
+    voice_choices = _get_voices(getattr(settings, "tts_engine", "auto"))
+    is_cloud = settings.elevenlabs_api_key is not None
 
     with gr.Blocks(
         title="VoiceLab",
@@ -125,6 +160,11 @@ def _build_gradio_ui() -> gr.Blocks:
                             label="Persona preset",
                         )
                         persona_desc = gr.Markdown("")
+                        engine_dd = gr.Dropdown(
+                            choices=_ENGINE_CHOICES,
+                            value=getattr(settings, "tts_engine", "auto"),
+                            label="Engine",
+                        )
                         voice_dd = gr.Dropdown(
                             choices=voice_choices,
                             value=voice_choices[0] if voice_choices else "default",
@@ -141,6 +181,18 @@ def _build_gradio_ui() -> gr.Blocks:
                 synth_btn = gr.Button("Synthesize", variant="primary")
                 synth_status = gr.Markdown("")
                 synth_audio = gr.Audio(label="Output", type="numpy", interactive=False)
+
+                # Engine change — update voice dropdown
+                def on_engine_change(engine_name):
+                    new_voices = _get_voices(engine_name)
+                    default = new_voices[0] if new_voices else "default"
+                    return gr.update(choices=new_voices, value=default)
+
+                engine_dd.change(
+                    on_engine_change,
+                    inputs=[engine_dd],
+                    outputs=[voice_dd],
+                )
 
                 # Persona auto-fill
                 def on_persona_change(persona_name):
@@ -166,59 +218,52 @@ def _build_gradio_ui() -> gr.Blocks:
                     ],
                 )
 
-                def on_synthesize(text, voice, stability, similarity, style, speed):
+                def on_synthesize(text, engine, voice, stability, similarity, style, speed):
                     if not text.strip():
                         return "⚠ Please enter some text.", None
-                    settings = {
+                    voice_settings = {
                         "stability": stability,
                         "similarity_boost": similarity,
                         "style": style,
                         "speed": speed,
                     }
-                    audio_bytes = synthesize_one(text, voice, settings)
+                    app_settings = get_settings()
+                    tts = get_tts_for_engine(engine, api_key=app_settings.elevenlabs_api_key)
+                    audio_bytes = tts.synthesize(text, voice, voice_settings)
                     if audio_bytes is None:
                         return "⚠ Synthesis returned no audio (check backend/voice settings).", None
-                    # Convert bytes to numpy array for gr.Audio
-                    import numpy as np  # noqa: PLC0415
-
-                    # Parse WAV or treat as raw PCM if MP3-like (ElevenLabs returns MP3)
-                    try:
-                        import wave  # noqa: PLC0415
-
-                        with wave.open(io.BytesIO(audio_bytes), "rb") as wf:
-                            sample_rate = wf.getframerate()
-                            n_frames = wf.getnframes()
-                            raw = wf.readframes(n_frames)
-                            n_channels = wf.getnchannels()
-                            sampwidth = wf.getsampwidth()
-                            if sampwidth == 2:
-                                arr = np.frombuffer(raw, dtype=np.int16)
-                            else:
-                                arr = np.frombuffer(raw, dtype=np.uint8).astype(np.int16)
-                            if n_channels == 2:
-                                arr = arr[::2]  # take left channel
-                        return "✓ Synthesis complete.", (sample_rate, arr)
-                    except Exception:
-                        # MP3 or other format — write to a unique per-request temp file
-                        tmp_path = _mp3_bytes_to_temp_path(audio_bytes, prefix="voicelab_out_")
-                        return "✓ Synthesis complete (MP3).", tmp_path
+                    out = _bytes_to_audio_gradio(audio_bytes)
+                    return f"✓ Synthesis complete ({engine}).", out
 
                 synth_btn.click(
                     on_synthesize,
-                    inputs=[text_input, voice_dd, stability_sl, similarity_sl, style_sl, speed_sl],
+                    inputs=[
+                        text_input,
+                        engine_dd,
+                        voice_dd,
+                        stability_sl,
+                        similarity_sl,
+                        style_sl,
+                        speed_sl,
+                    ],
                     outputs=[synth_status, synth_audio],
                 )
 
             # ---------------------------------------------------------------
-            # Tab 2: Compare
+            # Tab 2: Compare (same engine, two voices)
             # ---------------------------------------------------------------
             with gr.TabItem("Compare"):
-                gr.Markdown("### Compare two voices side-by-side.")
+                gr.Markdown("### Compare two voices side-by-side (same engine).")
                 cmp_text = gr.Textbox(
                     label="Text",
                     placeholder="Enter text to compare…",
                     lines=3,
                     value="The quick brown fox jumps over the lazy dog.",
+                )
+                cmp_engine = gr.Dropdown(
+                    choices=_ENGINE_CHOICES,
+                    value=getattr(settings, "tts_engine", "auto"),
+                    label="Engine",
                 )
                 with gr.Row():
                     with gr.Column():
@@ -269,6 +314,22 @@ def _build_gradio_ui() -> gr.Blocks:
                     s = p.default_settings
                     return s.stability, s.similarity_boost, s.style, s.speed
 
+                # Engine change for compare — update both voice dropdowns
+                def on_cmp_engine_change(engine_name):
+                    new_voices = _get_voices(engine_name)
+                    default_v = new_voices[0] if new_voices else "default"
+                    last_v = new_voices[-1] if len(new_voices) > 1 else default_v
+                    return (
+                        gr.update(choices=new_voices, value=default_v),
+                        gr.update(choices=new_voices, value=last_v),
+                    )
+
+                cmp_engine.change(
+                    on_cmp_engine_change,
+                    inputs=[cmp_engine],
+                    outputs=[voice_a, voice_b],
+                )
+
                 persona_a.change(
                     _fill_persona_settings,
                     inputs=[persona_a],
@@ -286,53 +347,23 @@ def _build_gradio_ui() -> gr.Blocks:
                     audio_out_a = gr.Audio(label="Voice A Output", type="numpy", interactive=False)
                     audio_out_b = gr.Audio(label="Voice B Output", type="numpy", interactive=False)
 
-                def on_compare(text, va, sa, sima, stya, spda, vb, sb, simb, styb, spdb):
+                def on_compare(text, engine, va, sa, sima, stya, spda, vb, sb, simb, styb, spdb):
                     if not text.strip():
                         return "⚠ Please enter some text.", None, None
 
-                    def _bytes_to_audio(audio_bytes):
-                        if audio_bytes is None:
-                            return None
-                        import wave  # noqa: PLC0415
+                    s_a = {"stability": sa, "similarity_boost": sima, "style": stya, "speed": spda}
+                    s_b = {"stability": sb, "similarity_boost": simb, "style": styb, "speed": spdb}
+                    app_settings = get_settings()
+                    tts = get_tts_for_engine(engine, api_key=app_settings.elevenlabs_api_key)
+                    res_a = tts.synthesize(text, va, s_a)
+                    res_b = tts.synthesize(text, vb, s_b)
 
-                        import numpy as np  # noqa: PLC0415
-
-                        try:
-                            with wave.open(io.BytesIO(audio_bytes), "rb") as wf:
-                                sr = wf.getframerate()
-                                raw = wf.readframes(wf.getnframes())
-                                nc = wf.getnchannels()
-                                sw = wf.getsampwidth()
-                                dtype = np.int16 if sw == 2 else np.uint8
-                                arr = np.frombuffer(raw, dtype=dtype).astype(np.int16)
-                                if nc == 2:
-                                    arr = arr[::2]
-                            return (sr, arr)
-                        except Exception:
-                            # MP3 or other format — write to unique per-request temp file
-                            tmp_path = _mp3_bytes_to_temp_path(audio_bytes, prefix="voicelab_cmp_")
-                            return tmp_path
-
-                    settings_a = {
-                        "stability": sa,
-                        "similarity_boost": sima,
-                        "style": stya,
-                        "speed": spda,
-                    }
-                    settings_b = {
-                        "stability": sb,
-                        "similarity_boost": simb,
-                        "style": styb,
-                        "speed": spdb,
-                    }
-                    tts = get_tts()
-                    res_a = tts.synthesize(text, va, settings_a)
-                    res_b = tts.synthesize(text, vb, settings_b)
-
-                    out_a = _bytes_to_audio(res_a)
-                    out_b = _bytes_to_audio(res_b)
+                    out_a = _bytes_to_audio_gradio(res_a)
+                    out_b = _bytes_to_audio_gradio(res_b)
                     status = (
-                        "✓ Compare complete." if (res_a or res_b) else "⚠ Both synthesises failed."
+                        f"✓ Compare complete ({engine})."
+                        if (res_a or res_b)
+                        else "⚠ Both synthesises failed."
                     )
                     return status, out_a, out_b
 
@@ -340,6 +371,7 @@ def _build_gradio_ui() -> gr.Blocks:
                     on_compare,
                     inputs=[
                         cmp_text,
+                        cmp_engine,
                         voice_a,
                         stab_a,
                         sim_a,
@@ -352,6 +384,77 @@ def _build_gradio_ui() -> gr.Blocks:
                         speed_b,
                     ],
                     outputs=[cmp_status, audio_out_a, audio_out_b],
+                )
+
+            # ---------------------------------------------------------------
+            # Tab 3: Cross-Engine Compare (same text, different engines)
+            # ---------------------------------------------------------------
+            with gr.TabItem("Cross-Engine Compare"):
+                gr.Markdown(
+                    "### Compare the same text across different TTS engines.\n"
+                    "Pick two (engine, voice) pairs to hear how each engine sounds."
+                )
+                xc_text = gr.Textbox(
+                    label="Text",
+                    placeholder="Enter text to compare across engines…",
+                    lines=3,
+                    value="Hello! This is a cross-engine voice comparison.",
+                )
+                with gr.Row():
+                    with gr.Column():
+                        gr.Markdown("**Engine A**")
+                        xc_engine_a = gr.Dropdown(
+                            choices=_ENGINE_CHOICES, value="kokoro", label="Engine A"
+                        )
+                        xc_voice_a_choices = _get_voices("kokoro")
+                        xc_voice_a = gr.Dropdown(
+                            choices=xc_voice_a_choices,
+                            value=xc_voice_a_choices[0] if xc_voice_a_choices else "default",
+                            label="Voice A",
+                        )
+                    with gr.Column():
+                        gr.Markdown("**Engine B**")
+                        xc_engine_b = gr.Dropdown(
+                            choices=_ENGINE_CHOICES, value="piper", label="Engine B"
+                        )
+                        xc_voice_b_choices = _get_voices("piper")
+                        xc_voice_b = gr.Dropdown(
+                            choices=xc_voice_b_choices,
+                            value=xc_voice_b_choices[0] if xc_voice_b_choices else "default",
+                            label="Voice B",
+                        )
+
+                # Engine dropdowns update corresponding voice dropdowns
+                def _xc_engine_change(engine_name):
+                    new_v = _get_voices(engine_name)
+                    return gr.update(choices=new_v, value=(new_v or ["default"])[0])
+
+                xc_engine_a.change(_xc_engine_change, inputs=[xc_engine_a], outputs=[xc_voice_a])
+                xc_engine_b.change(_xc_engine_change, inputs=[xc_engine_b], outputs=[xc_voice_b])
+
+                xc_speed = gr.Slider(0.5, 2.0, value=1.0, step=0.05, label="Speed")
+                xc_btn = gr.Button("Compare Engines", variant="primary")
+                xc_status = gr.Markdown("")
+                with gr.Row():
+                    xc_audio_a = gr.Audio(label="Engine A Output", type="numpy", interactive=False)
+                    xc_audio_b = gr.Audio(label="Engine B Output", type="numpy", interactive=False)
+
+                def on_cross_compare(text, eng_a, v_a, eng_b, v_b, speed):
+                    if not text.strip():
+                        return "⚠ Please enter some text.", None, None
+                    pairs = [(eng_a, v_a), (eng_b, v_b)]
+                    s = {"stability": 0.75, "similarity_boost": 0.75, "style": 0.0, "speed": speed}
+                    app_settings = get_settings()
+                    results = compare_across_engines(text, pairs, s, app_settings=app_settings)
+                    audios = [_bytes_to_audio_gradio(r[2]) for r in results]
+                    labels = [f"{r[0]}/{r[1]}" for r in results]
+                    status = f"✓ Cross-engine compare: {labels[0]} vs {labels[1]}"
+                    return status, audios[0], audios[1]
+
+                xc_btn.click(
+                    on_cross_compare,
+                    inputs=[xc_text, xc_engine_a, xc_voice_a, xc_engine_b, xc_voice_b, xc_speed],
+                    outputs=[xc_status, xc_audio_a, xc_audio_b],
                 )
 
             # ---------------------------------------------------------------

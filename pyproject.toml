@@ -17,11 +17,23 @@ dependencies = [
     "prometheus-fastapi-instrumentator>=7.0",
     "prometheus-client>=0.20",
     "tenacity>=9.1.4",
+    "kokoro-onnx>=0.4.0",
+    "piper-tts>=1.4.0",
+    "huggingface-hub>=0.20",
 ]
 
 [project.optional-dependencies]
 cloud = ["elevenlabs>=1.0"]
 audio = ["soundfile>=0.12"]
+# Kokoro ONNX TTS — torch-free, CPU/cross-platform (Apache-2.0 / MIT)
+# Weights (~88 MB) are downloaded from HF hub on first use.
+kokoro = ["kokoro-onnx>=0.4.0", "huggingface-hub>=0.20"]
+# Piper ONNX TTS — torch-free, CPU/cross-platform (MIT)
+# Voice models (.onnx) are downloaded from HF hub on first use.
+piper = ["piper-tts>=1.4.0", "huggingface-hub>=0.20"]
+# Chatterbox TTS — keyless local voice cloning (MIT) — PULLS TORCH
+# Heavy: ~1.5 GB download. Only install when you need keyless cloning.
+clone = ["chatterbox-tts>=0.1.0"]
 
 [project.scripts]
 voicelab = "voicelab.cli:main"
