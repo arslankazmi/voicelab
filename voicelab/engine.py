@@ -81,6 +81,15 @@ def audio_media_type(tts: Tts | None = None) -> str:
 
     if isinstance(tts, LocalTts):
         return "audio/wav"
+
+    try:
+        from voicelab.tts.chatterbox import ChatterboxTts  # noqa: PLC0415
+
+        if isinstance(tts, ChatterboxTts):
+            return "audio/wav"
+    except ImportError:
+        pass
+
     return "audio/mpeg"
 
 

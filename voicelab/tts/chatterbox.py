@@ -42,10 +42,23 @@ _model_load_attempted: bool = False
 _SAMPLE_RATE = 22050
 
 
+def _pick_device() -> str:
+    """Return 'mps' if available (Apple Silicon), else 'cpu'."""
+    try:
+        import torch  # noqa: PLC0415
+
+        if torch.backends.mps.is_available():
+            return "mps"
+    except Exception:
+        pass
+    return "cpu"
+
+
 def _load_model():  # noqa: ANN201
     """Lazy-load Chatterbox model (cached module-level).
 
     Downloads ~1.5 GB of model weights on first use.
+    Device: mps (Apple Silicon) → cpu fallback.
     Returns model or None if unavailable.
     """
     global _model, _model_load_attempted
@@ -55,8 +68,10 @@ def _load_model():  # noqa: ANN201
     try:
         from chatterbox.tts import ChatterboxTTS  # noqa: PLC0415
 
-        _model = ChatterboxTTS.from_pretrained(device="cpu")
-        logger.info("Chatterbox model loaded")
+        device = _pick_device()
+        logger.info("Chatterbox loading on device=%s", device)
+        _model = ChatterboxTTS.from_pretrained(device=device)
+        logger.info("Chatterbox model loaded (device=%s)", device)
     except ImportError:
         logger.warning("chatterbox-tts not installed. Install with: uv sync --extra clone")
         _model = None

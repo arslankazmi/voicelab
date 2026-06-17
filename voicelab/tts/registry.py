@@ -20,9 +20,9 @@ from typing import Literal
 
 logger = logging.getLogger(__name__)
 
-EngineKey = Literal["auto", "elevenlabs", "kokoro", "piper", "local"]
+EngineKey = Literal["auto", "elevenlabs", "kokoro", "piper", "local", "chatterbox"]
 
-_ALL_ENGINES: tuple[str, ...] = ("elevenlabs", "kokoro", "piper", "local")
+_ALL_ENGINES: tuple[str, ...] = ("elevenlabs", "kokoro", "piper", "local", "chatterbox")
 
 
 @dataclass
@@ -79,6 +79,20 @@ _REGISTRY: list[BackendInfo] = [
         notes="System TTS: pyttsx3 or macOS say/afconvert. Always available.",
         requires_key=False,
         tags=["local", "system"],
+    ),
+    BackendInfo(
+        name="chatterbox",
+        priority=50,
+        package="chatterbox-tts",
+        import_check="chatterbox.tts",
+        license="MIT",
+        notes=(
+            "Keyless local voice cloning + emotion control. "
+            "Requires [clone] extra (pulls torch, ~1.5 GB). "
+            "Install: uv sync --extra clone"
+        ),
+        requires_key=False,
+        tags=["local", "cloning", "emotion", "torch"],
     ),
 ]
 
@@ -179,5 +193,10 @@ def _instantiate(info: BackendInfo, *, api_key: str | None = None):  # noqa: ANN
         from voicelab.tts.local import LocalTts
 
         return LocalTts()
+
+    if info.name == "chatterbox":
+        from voicelab.tts.chatterbox import ChatterboxTts
+
+        return ChatterboxTts()
 
     return None

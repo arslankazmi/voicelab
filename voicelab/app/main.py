@@ -42,7 +42,7 @@ async def _lifespan(app: FastAPI):
 # Backend banner helpers
 # ---------------------------------------------------------------------------
 
-_ENGINE_CHOICES: list[str] = ["auto", "elevenlabs", "kokoro", "piper", "local"]
+_ENGINE_CHOICES: list[str] = ["auto", "elevenlabs", "kokoro", "piper", "local", "chatterbox"]
 
 
 def _backend_label() -> str:
@@ -65,6 +65,11 @@ def _backend_banner_md() -> str:
     lines.append("")
     active = getattr(settings, "tts_engine", "auto")
     lines.append(f"_Active engine setting: `{active}`. Set `TTS_ENGINE=kokoro` etc. in `.env`._")
+    lines.append("")
+    lines.append(
+        "_**Chatterbox** (keyless voice cloning + emotion): "
+        "install with `uv sync --extra clone` then select engine=chatterbox._"
+    )
     return "\n".join(lines)
 
 
@@ -177,21 +182,42 @@ def _build_gradio_ui() -> gr.Blocks:
                         )
                         style_sl = gr.Slider(0.0, 1.0, value=0.0, step=0.01, label="Style")
                         speed_sl = gr.Slider(0.5, 2.0, value=1.0, step=0.05, label="Speed")
+                        exaggeration_sl = gr.Slider(
+                            0.0,
+                            1.0,
+                            value=0.5,
+                            step=0.05,
+                            label="Emotion / Exaggeration (Chatterbox only)",
+                            visible=False,
+                        )
+                        cfg_weight_sl = gr.Slider(
+                            0.0,
+                            1.0,
+                            value=0.5,
+                            step=0.05,
+                            label="CFG Weight (Chatterbox only)",
+                            visible=False,
+                        )
 
                 synth_btn = gr.Button("Synthesize", variant="primary")
                 synth_status = gr.Markdown("")
                 synth_audio = gr.Audio(label="Output", type="numpy", interactive=False)
 
-                # Engine change — update voice dropdown
+                # Engine change — update voice dropdown + show/hide chatterbox sliders
                 def on_engine_change(engine_name):
                     new_voices = _get_voices(engine_name)
                     default = new_voices[0] if new_voices else "default"
-                    return gr.update(choices=new_voices, value=default)
+                    is_cb = engine_name == "chatterbox"
+                    return (
+                        gr.update(choices=new_voices, value=default),
+                        gr.update(visible=is_cb),
+                        gr.update(visible=is_cb),
+                    )
 
                 engine_dd.change(
                     on_engine_change,
                     inputs=[engine_dd],
-                    outputs=[voice_dd],
+                    outputs=[voice_dd, exaggeration_sl, cfg_weight_sl],
                 )
 
                 # Persona auto-fill
@@ -218,15 +244,28 @@ def _build_gradio_ui() -> gr.Blocks:
                     ],
                 )
 
-                def on_synthesize(text, engine, voice, stability, similarity, style, speed):
+                def on_synthesize(
+                    text,
+                    engine,
+                    voice,
+                    stability,
+                    similarity,
+                    style,
+                    speed,
+                    exaggeration,
+                    cfg_weight,
+                ):
                     if not text.strip():
                         return "⚠ Please enter some text.", None
-                    voice_settings = {
+                    voice_settings: dict = {
                         "stability": stability,
                         "similarity_boost": similarity,
                         "style": style,
                         "speed": speed,
                     }
+                    if engine == "chatterbox":
+                        voice_settings["exaggeration"] = exaggeration
+                        voice_settings["cfg_weight"] = cfg_weight
                     app_settings = get_settings()
                     tts = get_tts_for_engine(engine, api_key=app_settings.elevenlabs_api_key)
                     audio_bytes = tts.synthesize(text, voice, voice_settings)
@@ -245,6 +284,8 @@ def _build_gradio_ui() -> gr.Blocks:
                         similarity_sl,
                         style_sl,
                         speed_sl,
+                        exaggeration_sl,
+                        cfg_weight_sl,
                     ],
                     outputs=[synth_status, synth_audio],
                 )
@@ -458,10 +499,127 @@ def _build_gradio_ui() -> gr.Blocks:
                 )
 
             # ---------------------------------------------------------------
-            # Tab 3: Voice Cloning
+            # Tab 4: Voice Cloning
             # ---------------------------------------------------------------
             with gr.TabItem("Voice Cloning"):
-                if is_cloud:
+                from voicelab.tts.registry import (  # noqa: PLC0415
+                    _REGISTRY as _TTS_REGISTRY,
+                )
+                from voicelab.tts.registry import (
+                    is_available as _is_available,
+                )
+
+                _cb_info = next(
+                    (b for b in _TTS_REGISTRY if b.name == "chatterbox"),
+                    None,
+                )
+                _chatterbox_available = _cb_info is not None and _is_available(_cb_info)
+
+                if _chatterbox_available:
+                    gr.Markdown(
+                        "### Keyless Voice Cloning (Chatterbox)\n"
+                        "Clone any voice from a 5–20 second reference audio clip — "
+                        "**no API key required**.\n\n"
+                        "_By uploading a voice sample, you confirm you have the right "
+                        "to clone this voice._"
+                    )
+                    cb_clone_consent = gr.Checkbox(
+                        label="I confirm I have the right to clone this voice",
+                        value=False,
+                    )
+                    cb_clone_sample = gr.Audio(
+                        sources=["upload"],
+                        type="filepath",
+                        label="Reference audio (WAV / MP3, 5–20 sec)",
+                    )
+                    cb_clone_text = gr.Textbox(
+                        label="Text to synthesize",
+                        placeholder="Enter text to speak in the cloned voice…",
+                        lines=3,
+                        value="Hello! This is a cloned voice speaking.",
+                    )
+                    cb_exaggeration = gr.Slider(
+                        0.0, 1.0, value=0.5, step=0.05, label="Emotion / Exaggeration"
+                    )
+                    cb_cfg_weight = gr.Slider(0.0, 1.0, value=0.5, step=0.05, label="CFG Weight")
+                    cb_clone_btn = gr.Button("Clone & Synthesize", variant="primary")
+                    cb_clone_status = gr.Markdown("")
+                    cb_clone_audio = gr.Audio(
+                        label="Cloned Voice Output", type="numpy", interactive=False
+                    )
+
+                    def on_cb_clone(consent, sample_path, text, exaggeration, cfg_weight):
+                        if not consent:
+                            return (
+                                "⚠ You must confirm you have the right to clone this voice.",
+                                None,
+                            )
+                        if not sample_path:
+                            return "⚠ Please upload a reference audio sample.", None
+                        if not text.strip():
+                            return "⚠ Please enter text to synthesize.", None
+                        from voicelab.tts.chatterbox import ChatterboxTts  # noqa: PLC0415
+
+                        tts = ChatterboxTts()
+                        clone_settings = {
+                            "reference_audio": sample_path,
+                            "exaggeration": exaggeration,
+                            "cfg_weight": cfg_weight,
+                        }
+                        audio_bytes = tts.synthesize(text, "cloned", clone_settings)
+                        if audio_bytes is None:
+                            return "⚠ Cloning failed — check Chatterbox installation.", None
+                        out = _bytes_to_audio_gradio(audio_bytes)
+                        return "✓ Voice cloned and synthesized!", out
+
+                    cb_clone_btn.click(
+                        on_cb_clone,
+                        inputs=[
+                            cb_clone_consent,
+                            cb_clone_sample,
+                            cb_clone_text,
+                            cb_exaggeration,
+                            cb_cfg_weight,
+                        ],
+                        outputs=[cb_clone_status, cb_clone_audio],
+                    )
+
+                    if is_cloud:
+                        gr.Markdown(
+                            "---\n### ElevenLabs Voice Cloning\n_Requires Professional plan._"
+                        )
+                        el_clone_sample = gr.Audio(
+                            sources=["upload"],
+                            type="filepath",
+                            label="Upload audio sample (WAV / MP3)",
+                        )
+                        el_clone_name = gr.Textbox(
+                            label="Voice name", placeholder="My Custom Voice"
+                        )
+                        el_clone_btn = gr.Button("Clone Voice (ElevenLabs)", variant="secondary")
+                        el_clone_status = gr.Markdown("")
+
+                        def on_el_clone(sample_path, name):
+                            if not sample_path:
+                                return "⚠ Please upload an audio sample."
+                            if not name.strip():
+                                return "⚠ Please enter a voice name."
+                            from voicelab.tts.elevenlabs import ElevenLabsTts  # noqa: PLC0415
+
+                            _settings = get_settings()
+                            tts = ElevenLabsTts(api_key=_settings.elevenlabs_api_key)
+                            voice_id = tts.clone_voice(sample_path, name)
+                            if voice_id:
+                                return f"✓ Voice cloned! voice_id = `{voice_id}`"
+                            return "⚠ Voice cloning failed — check your ElevenLabs plan tier."
+
+                        el_clone_btn.click(
+                            on_el_clone,
+                            inputs=[el_clone_sample, el_clone_name],
+                            outputs=[el_clone_status],
+                        )
+
+                elif is_cloud:
                     gr.Markdown(
                         "### Clone a voice from an audio sample.\n"
                         "_Requires ElevenLabs Professional plan or higher._"
@@ -482,8 +640,8 @@ def _build_gradio_ui() -> gr.Blocks:
                             return "⚠ Please enter a voice name."
                         from voicelab.tts.elevenlabs import ElevenLabsTts  # noqa: PLC0415
 
-                        settings = get_settings()
-                        tts = ElevenLabsTts(api_key=settings.elevenlabs_api_key)
+                        _settings = get_settings()
+                        tts = ElevenLabsTts(api_key=_settings.elevenlabs_api_key)
                         voice_id = tts.clone_voice(sample_path, name)
                         if voice_id:
                             return f"✓ Voice cloned! voice_id = `{voice_id}`"
@@ -496,14 +654,15 @@ def _build_gradio_ui() -> gr.Blocks:
                     )
                 else:
                     gr.Markdown(
-                        "### Voice Cloning — Requires ElevenLabs Key\n\n"
-                        "This feature is **disabled** in keyless mode.\n\n"
-                        "To enable:\n"
+                        "### Voice Cloning\n\n"
+                        "**Keyless cloning** (Chatterbox) is available after installing "
+                        "the `[clone]` extra:\n"
+                        "```\nuv sync --extra clone\n```\n\n"
+                        "**Cloud cloning** (ElevenLabs) requires an API key:\n"
                         "1. Get an ElevenLabs API key at https://elevenlabs.io\n"
                         "2. Set `ELEVENLABS_API_KEY=your_key` in your `.env` file\n"
-                        "3. Install the cloud extras: `uv pip install 'voicelab[cloud]'`\n"
-                        "4. Restart the server\n\n"
-                        "_Voice cloning also requires an ElevenLabs Professional plan or higher._"
+                        "3. Restart the server\n\n"
+                        "_ElevenLabs voice cloning requires a Professional plan or higher._"
                     )
 
     return demo

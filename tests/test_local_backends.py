@@ -391,6 +391,151 @@ class TestChatterboxTtsMocked:
         assert "default" in ids
         assert "cloned" in ids
 
+    def test_synthesize_passes_exaggeration_to_model(self):
+        """Emotion/exaggeration param is forwarded to model.generate()."""
+        import numpy as np
+
+        from voicelab.tts import chatterbox as cb_mod
+
+        cb_mod._model_load_attempted = False
+        cb_mod._model = None
+
+        fake_audio = MagicMock()
+        fake_audio.squeeze.return_value.detach.return_value.cpu.return_value.numpy.return_value = (
+            np.zeros(22050, dtype=np.float32)
+        )
+
+        fake_model = MagicMock()
+        fake_model.sr = 22050
+        fake_model.generate.return_value = fake_audio
+
+        cb_mod._model = fake_model
+        cb_mod._model_load_attempted = True
+
+        from voicelab.tts.chatterbox import ChatterboxTts
+
+        tts = ChatterboxTts()
+        result = tts.synthesize("test text", "default", {"exaggeration": 0.8, "cfg_weight": 0.3})
+
+        assert result is not None
+        assert result[:4] == b"RIFF"
+        fake_model.generate.assert_called_once_with("test text", exaggeration=0.8, cfg_weight=0.3)
+
+    def test_synthesize_passes_reference_audio_for_cloning(self):
+        """When reference_audio is given, model.generate() receives audio_prompt_path."""
+        import numpy as np
+
+        from voicelab.tts import chatterbox as cb_mod
+
+        cb_mod._model_load_attempted = False
+        cb_mod._model = None
+
+        fake_audio = MagicMock()
+        fake_audio.squeeze.return_value.detach.return_value.cpu.return_value.numpy.return_value = (
+            np.zeros(22050, dtype=np.float32)
+        )
+
+        fake_model = MagicMock()
+        fake_model.sr = 22050
+        fake_model.generate.return_value = fake_audio
+
+        cb_mod._model = fake_model
+        cb_mod._model_load_attempted = True
+
+        from voicelab.tts.chatterbox import ChatterboxTts
+
+        tts = ChatterboxTts()
+        result = tts.synthesize(
+            "clone me",
+            "cloned",
+            {"reference_audio": "/tmp/ref.wav", "exaggeration": 0.5, "cfg_weight": 0.5},
+        )
+
+        assert result is not None
+        assert result[:4] == b"RIFF"
+        fake_model.generate.assert_called_once_with(
+            "clone me",
+            audio_prompt_path="/tmp/ref.wav",
+            exaggeration=0.5,
+            cfg_weight=0.5,
+        )
+
+    def test_synthesize_graceful_none_on_exception(self):
+        """If model.generate() raises, synthesize returns None (never raises)."""
+        from voicelab.tts import chatterbox as cb_mod
+
+        fake_model = MagicMock()
+        fake_model.generate.side_effect = RuntimeError("boom")
+
+        cb_mod._model = fake_model
+        cb_mod._model_load_attempted = True
+
+        from voicelab.tts.chatterbox import ChatterboxTts
+
+        tts = ChatterboxTts()
+        result = tts.synthesize("boom", "default", {})
+        assert result is None
+
+    def test_chatterbox_in_registry(self):
+        """Chatterbox appears in the registry with correct metadata."""
+        from voicelab.tts.registry import _REGISTRY
+
+        cb_entry = next((b for b in _REGISTRY if b.name == "chatterbox"), None)
+        assert cb_entry is not None
+        assert cb_entry.license == "MIT"
+        assert cb_entry.requires_key is False
+        assert "cloning" in cb_entry.tags
+
+    def test_chatterbox_registry_lower_priority_than_local(self):
+        """Chatterbox has lower priority than local (opt-in, not auto-default)."""
+        from voicelab.tts.registry import _REGISTRY
+
+        local_p = next(b.priority for b in _REGISTRY if b.name == "local")
+        cb_p = next(b.priority for b in _REGISTRY if b.name == "chatterbox")
+        # Chatterbox priority must be higher number (lower preference) than local
+        assert cb_p > local_p
+
+    def test_chatterbox_not_in_auto_chain_when_unavailable(self):
+        """Auto mode never picks chatterbox when chatterbox.tts is not importable."""
+        import voicelab.tts.registry as registry_mod
+
+        original = registry_mod.is_available
+
+        def mock_avail(info, *, api_key=None):
+            if info.name == "chatterbox":
+                return False
+            return original(info, api_key=api_key)
+
+        with patch.object(registry_mod, "is_available", side_effect=mock_avail):
+            tts = registry_mod.get_tts_for_engine("auto", api_key=None)
+
+        # Should not be chatterbox
+        from voicelab.tts.chatterbox import ChatterboxTts
+
+        assert not isinstance(tts, ChatterboxTts)
+
+    def test_forced_chatterbox_engine_selection(self):
+        """engine='chatterbox' resolves to ChatterboxTts when mocked as available."""
+        import voicelab.tts.registry as registry_mod
+        from voicelab.tts.chatterbox import ChatterboxTts
+
+        fake_chatterbox_mod = MagicMock()
+        cb_mods = {"chatterbox": fake_chatterbox_mod, "chatterbox.tts": fake_chatterbox_mod}
+        with patch.dict("sys.modules", cb_mods):
+            with patch.object(registry_mod, "_instantiate") as mock_inst:
+                mock_inst.side_effect = lambda info, **kw: (
+                    ChatterboxTts() if info.name == "chatterbox" else None
+                )
+                tts = registry_mod.get_tts_for_engine("chatterbox", api_key=None)
+        assert isinstance(tts, ChatterboxTts)
+
+    def test_audio_media_type_chatterbox_is_wav(self):
+        from voicelab.engine import audio_media_type
+        from voicelab.tts.chatterbox import ChatterboxTts
+
+        tts = ChatterboxTts()
+        assert audio_media_type(tts) == "audio/wav"
+
 
 # ===========================================================================
 # API /api/v1/engines endpoint
@@ -541,3 +686,59 @@ class TestPiperReal:
         tts = PiperTts()
         voices = tts.list_voices()
         assert len(voices) > 0
+
+
+@pytest.mark.skipif(
+    not _pkg_available("chatterbox"),
+    reason="chatterbox-tts not installed (uv sync --extra clone)",
+)
+class TestChatterboxReal:
+    def test_chatterbox_synthesize_low_exaggeration(self):
+        """Real Chatterbox synthesis at exaggeration=0.3: returns WAV bytes."""
+        from voicelab.tts import chatterbox as cb_mod
+
+        cb_mod._model = None
+        cb_mod._model_load_attempted = False
+
+        from voicelab.tts.chatterbox import ChatterboxTts
+
+        tts = ChatterboxTts()
+        result = tts.synthesize(
+            "The quick brown fox jumps over the lazy dog.",
+            "default",
+            {"exaggeration": 0.3, "cfg_weight": 0.5},
+        )
+
+        assert result is not None, "ChatterboxTts returned None — check model download"
+        assert len(result) > 1000, "Expected substantial WAV bytes"
+        assert result[:4] == b"RIFF", f"Expected RIFF header, got {result[:4]!r}"
+        assert result[8:12] == b"WAVE", "Expected WAVE format marker"
+
+    def test_chatterbox_synthesize_high_exaggeration(self):
+        """Real Chatterbox synthesis at exaggeration=0.8: returns WAV bytes."""
+        from voicelab.tts import chatterbox as cb_mod
+
+        cb_mod._model = None
+        cb_mod._model_load_attempted = False
+
+        from voicelab.tts.chatterbox import ChatterboxTts
+
+        tts = ChatterboxTts()
+        result = tts.synthesize(
+            "The quick brown fox jumps over the lazy dog.",
+            "default",
+            {"exaggeration": 0.8, "cfg_weight": 0.5},
+        )
+
+        assert result is not None, "ChatterboxTts returned None at high exaggeration"
+        assert len(result) > 1000, "Expected substantial WAV bytes"
+        assert result[:4] == b"RIFF", f"Expected RIFF header, got {result[:4]!r}"
+
+    def test_chatterbox_list_voices(self):
+        from voicelab.tts.chatterbox import ChatterboxTts
+
+        tts = ChatterboxTts()
+        voices = tts.list_voices()
+        assert len(voices) >= 2
+        ids = {v["id"] for v in voices}
+        assert "default" in ids

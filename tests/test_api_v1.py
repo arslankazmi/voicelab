@@ -192,15 +192,28 @@ async def test_clone_without_consent_returns_400(client):
 
 @pytest.mark.asyncio
 async def test_clone_with_consent_no_key_returns_501(client):
-    """With consent=true but no ElevenLabs key → 501."""
-    resp = await client.post(
-        "/api/v1/clone",
-        data={"consent": "true", "voice_name": "Test"},
-        files={"sample": ("test.wav", b"RIFF\x00\x00\x00\x00WAVE", "audio/wav")},
-    )
+    """With consent=true, no ElevenLabs key, and chatterbox absent → 501."""
+    import importlib.util
+
+    original_find_spec = importlib.util.find_spec
+
+    def _fake_find_spec(name, *args, **kwargs):
+        if name == "chatterbox":
+            return None
+        return original_find_spec(name, *args, **kwargs)
+
+    # Patch validate_audio (no-op) so minimal fake WAV passes validation.
+    # Patch find_spec so chatterbox appears absent — exercises ElevenLabs fallback path.
+    with patch("importlib.util.find_spec", side_effect=_fake_find_spec):
+        with patch("voicelab.validation.validate_audio", return_value=None):
+            resp = await client.post(
+                "/api/v1/clone",
+                data={"consent": "true", "voice_name": "Test"},
+                files={"sample": ("test.wav", b"RIFF\x00\x00\x00\x00WAVE", "audio/wav")},
+            )
     assert resp.status_code == 501
     detail = resp.json()["detail"].lower()
-    assert "elevenlabs" in detail or "api key" in detail
+    assert "elevenlabs" in detail or "api key" in detail or "clone" in detail
 
 
 # ---------------------------------------------------------------------------

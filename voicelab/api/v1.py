@@ -67,6 +67,9 @@ class VoiceSettings(BaseModel):
     similarity_boost: float = Field(default=0.75, ge=0.0, le=1.0)
     style: float = Field(default=0.0, ge=0.0, le=1.0)
     speed: float = Field(default=1.0, ge=0.25, le=4.0)
+    # Chatterbox-specific params — ignored by other backends
+    exaggeration: float = Field(default=0.5, ge=0.0, le=1.0)
+    cfg_weight: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
 class SynthesizeRequest(BaseModel):
@@ -260,20 +263,20 @@ async def clone_voice(
     consent: bool = Form(...),  # noqa: B008
     voice_name: str = Form(...),  # noqa: B008
     sample: UploadFile = File(...),  # noqa: B008
+    text: str = Form(default="Hello, this is a voice clone test."),  # noqa: B008
+    exaggeration: float = Form(default=0.5),  # noqa: B008
+    cfg_weight: float = Form(default=0.5),  # noqa: B008
 ) -> dict[str, Any]:
     """Clone a voice from an uploaded audio sample.
 
-    Requires ``consent=true`` and an ElevenLabs API key.
+    Requires ``consent=true``.
+
+    If Chatterbox is installed (``[clone]`` extra), it is used for **keyless** local
+    cloning and returns ``audio`` (base64 WAV).  If only ElevenLabs is configured,
+    it performs cloud cloning and returns ``voice_id``.
     """
     if not consent:
         raise HTTPException(status_code=400, detail="Consent required for voice cloning")
-
-    settings = get_settings()
-    if not settings.elevenlabs_api_key:
-        raise HTTPException(
-            status_code=501,
-            detail="Voice cloning requires ElevenLabs API key. Set ELEVENLABS_API_KEY.",
-        )
 
     # Write upload to a temp file
     suffix = ""
@@ -296,10 +299,47 @@ async def clone_voice(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    from voicelab.tts.elevenlabs import ElevenLabsTts
+    # --- Prefer Chatterbox (keyless local cloning) when installed ---
+    import importlib.util  # noqa: PLC0415
 
-    tts = ElevenLabsTts(api_key=settings.elevenlabs_api_key)
-    voice_id = tts.clone_voice(tmp_path, voice_name)
+    if importlib.util.find_spec("chatterbox") is not None:
+        from voicelab.tts.chatterbox import ChatterboxTts  # noqa: PLC0415
+
+        tts = ChatterboxTts()
+        clone_settings = {
+            "reference_audio": tmp_path,
+            "exaggeration": exaggeration,
+            "cfg_weight": cfg_weight,
+        }
+        audio_bytes = tts.synthesize(text, "cloned", clone_settings)
+        if audio_bytes is None:
+            raise HTTPException(
+                status_code=502,
+                detail="Chatterbox voice cloning failed — check installation.",
+            )
+        import base64  # noqa: PLC0415
+
+        return {
+            "engine": "chatterbox",
+            "voice_name": voice_name,
+            "audio": base64.b64encode(audio_bytes).decode(),
+        }
+
+    # --- Fall back to ElevenLabs cloud cloning ---
+    settings = get_settings()
+    if not settings.elevenlabs_api_key:
+        raise HTTPException(
+            status_code=501,
+            detail=(
+                "Voice cloning requires either Chatterbox (install with 'uv sync --extra clone') "
+                "or an ElevenLabs API key (set ELEVENLABS_API_KEY)."
+            ),
+        )
+
+    from voicelab.tts.elevenlabs import ElevenLabsTts  # noqa: PLC0415
+
+    el_tts = ElevenLabsTts(api_key=settings.elevenlabs_api_key)
+    voice_id = el_tts.clone_voice(tmp_path, voice_name)
 
     if voice_id is None:
         raise HTTPException(
@@ -307,4 +347,4 @@ async def clone_voice(
             detail="Voice cloning failed — check your ElevenLabs plan tier.",
         )
 
-    return {"voice_id": voice_id}
+    return {"engine": "elevenlabs", "voice_id": voice_id}
