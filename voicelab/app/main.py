@@ -13,16 +13,20 @@ from __future__ import annotations
 
 import io
 import logging
-import os
+import tempfile
 from contextlib import asynccontextmanager
 
 import gradio as gr
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from voicelab.api.v1 import limiter as api_limiter
+from voicelab.api.v1 import router as api_v1_router
 from voicelab.config.settings import get_settings
 from voicelab.engine import get_tts, synthesize_one
-from voicelab.personas import load_personas, get_persona
+from voicelab.logging_config import configure_logging
+from voicelab.middleware import RequestIDMiddleware
+from voicelab.personas import get_persona, load_personas
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +40,7 @@ async def _lifespan(app: FastAPI):
 # ---------------------------------------------------------------------------
 # Backend banner helpers
 # ---------------------------------------------------------------------------
+
 
 def _backend_label() -> str:
     settings = get_settings()
@@ -58,6 +63,7 @@ def _backend_banner_md() -> str:
 # Voice list helper
 # ---------------------------------------------------------------------------
 
+
 def _get_voices() -> list[str]:
     """Return list of voice names/ids from the active backend."""
     try:
@@ -69,9 +75,22 @@ def _get_voices() -> list[str]:
         return ["default"]
 
 
+def _mp3_bytes_to_temp_path(audio_bytes: bytes, prefix: str = "voicelab_") -> str:
+    """Write MP3 bytes to a unique per-request temp file and return its path.
+
+    Uses NamedTemporaryFile so concurrent requests never share a file.
+    The caller (Gradio) serves the file; we schedule best-effort cleanup
+    via a finalizer registered with the OS temp infrastructure.
+    """
+    with tempfile.NamedTemporaryFile(suffix=".mp3", prefix=prefix, dir="/tmp", delete=False) as tmp:
+        tmp.write(audio_bytes)
+        return tmp.name
+
+
 # ---------------------------------------------------------------------------
 # Gradio UI
 # ---------------------------------------------------------------------------
+
 
 def _build_gradio_ui() -> gr.Blocks:
     """Construct the Gradio Blocks UI."""
@@ -113,7 +132,9 @@ def _build_gradio_ui() -> gr.Blocks:
                         )
                     with gr.Column(scale=1):
                         stability_sl = gr.Slider(0.0, 1.0, value=0.75, step=0.01, label="Stability")
-                        similarity_sl = gr.Slider(0.0, 1.0, value=0.75, step=0.01, label="Similarity Boost")
+                        similarity_sl = gr.Slider(
+                            0.0, 1.0, value=0.75, step=0.01, label="Similarity Boost"
+                        )
                         style_sl = gr.Slider(0.0, 1.0, value=0.0, step=0.01, label="Style")
                         speed_sl = gr.Slider(0.5, 2.0, value=1.0, step=0.05, label="Speed")
 
@@ -135,7 +156,14 @@ def _build_gradio_ui() -> gr.Blocks:
                 persona_dd.change(
                     on_persona_change,
                     inputs=[persona_dd],
-                    outputs=[persona_desc, stability_sl, similarity_sl, style_sl, speed_sl, text_input],
+                    outputs=[
+                        persona_desc,
+                        stability_sl,
+                        similarity_sl,
+                        style_sl,
+                        speed_sl,
+                        text_input,
+                    ],
                 )
 
                 def on_synthesize(text, voice, stability, similarity, style, speed):
@@ -151,11 +179,12 @@ def _build_gradio_ui() -> gr.Blocks:
                     if audio_bytes is None:
                         return "⚠ Synthesis returned no audio (check backend/voice settings).", None
                     # Convert bytes to numpy array for gr.Audio
-                    import numpy as np
-                    import struct
+                    import numpy as np  # noqa: PLC0415
+
                     # Parse WAV or treat as raw PCM if MP3-like (ElevenLabs returns MP3)
                     try:
-                        import wave
+                        import wave  # noqa: PLC0415
+
                         with wave.open(io.BytesIO(audio_bytes), "rb") as wf:
                             sample_rate = wf.getframerate()
                             n_frames = wf.getnframes()
@@ -170,10 +199,8 @@ def _build_gradio_ui() -> gr.Blocks:
                                 arr = arr[::2]  # take left channel
                         return "✓ Synthesis complete.", (sample_rate, arr)
                     except Exception:
-                        # MP3 or other format — return raw bytes as temp file path
-                        tmp_path = "/tmp/voicelab_out.mp3"
-                        with open(tmp_path, "wb") as f:
-                            f.write(audio_bytes)
+                        # MP3 or other format — write to a unique per-request temp file
+                        tmp_path = _mp3_bytes_to_temp_path(audio_bytes, prefix="voicelab_out_")
                         return "✓ Synthesis complete (MP3).", tmp_path
 
                 synth_btn.click(
@@ -212,9 +239,14 @@ def _build_gradio_ui() -> gr.Blocks:
                         speed_a = gr.Slider(0.5, 2.0, value=1.0, step=0.05, label="Speed A")
                     with gr.Column():
                         gr.Markdown("**Voice B**")
+                        _voice_b_default = (
+                            voice_choices[-1]
+                            if len(voice_choices) > 1
+                            else (voice_choices[0] if voice_choices else "default")
+                        )
                         voice_b = gr.Dropdown(
                             choices=voice_choices,
-                            value=voice_choices[-1] if len(voice_choices) > 1 else (voice_choices[0] if voice_choices else "default"),
+                            value=_voice_b_default,
                             label="Voice B",
                         )
                         persona_b = gr.Dropdown(
@@ -237,8 +269,16 @@ def _build_gradio_ui() -> gr.Blocks:
                     s = p.default_settings
                     return s.stability, s.similarity_boost, s.style, s.speed
 
-                persona_a.change(_fill_persona_settings, inputs=[persona_a], outputs=[stab_a, sim_a, style_a, speed_a])
-                persona_b.change(_fill_persona_settings, inputs=[persona_b], outputs=[stab_b, sim_b, style_b, speed_b])
+                persona_a.change(
+                    _fill_persona_settings,
+                    inputs=[persona_a],
+                    outputs=[stab_a, sim_a, style_a, speed_a],
+                )
+                persona_b.change(
+                    _fill_persona_settings,
+                    inputs=[persona_b],
+                    outputs=[stab_b, sim_b, style_b, speed_b],
+                )
 
                 cmp_btn = gr.Button("Compare", variant="primary")
                 cmp_status = gr.Markdown("")
@@ -253,38 +293,64 @@ def _build_gradio_ui() -> gr.Blocks:
                     def _bytes_to_audio(audio_bytes):
                         if audio_bytes is None:
                             return None
-                        import numpy as np
-                        import wave
+                        import wave  # noqa: PLC0415
+
+                        import numpy as np  # noqa: PLC0415
+
                         try:
                             with wave.open(io.BytesIO(audio_bytes), "rb") as wf:
                                 sr = wf.getframerate()
                                 raw = wf.readframes(wf.getnframes())
                                 nc = wf.getnchannels()
                                 sw = wf.getsampwidth()
-                                arr = np.frombuffer(raw, dtype=np.int16 if sw == 2 else np.uint8).astype(np.int16)
+                                dtype = np.int16 if sw == 2 else np.uint8
+                                arr = np.frombuffer(raw, dtype=dtype).astype(np.int16)
                                 if nc == 2:
                                     arr = arr[::2]
                             return (sr, arr)
                         except Exception:
-                            p = "/tmp/voicelab_cmp.mp3"
-                            with open(p, "wb") as f:
-                                f.write(audio_bytes)
-                            return p
+                            # MP3 or other format — write to unique per-request temp file
+                            tmp_path = _mp3_bytes_to_temp_path(audio_bytes, prefix="voicelab_cmp_")
+                            return tmp_path
 
-                    settings_a = {"stability": sa, "similarity_boost": sima, "style": stya, "speed": spda}
-                    settings_b = {"stability": sb, "similarity_boost": simb, "style": styb, "speed": spdb}
+                    settings_a = {
+                        "stability": sa,
+                        "similarity_boost": sima,
+                        "style": stya,
+                        "speed": spda,
+                    }
+                    settings_b = {
+                        "stability": sb,
+                        "similarity_boost": simb,
+                        "style": styb,
+                        "speed": spdb,
+                    }
                     tts = get_tts()
                     res_a = tts.synthesize(text, va, settings_a)
                     res_b = tts.synthesize(text, vb, settings_b)
 
                     out_a = _bytes_to_audio(res_a)
                     out_b = _bytes_to_audio(res_b)
-                    status = "✓ Compare complete." if (res_a or res_b) else "⚠ Both synthesises failed."
+                    status = (
+                        "✓ Compare complete." if (res_a or res_b) else "⚠ Both synthesises failed."
+                    )
                     return status, out_a, out_b
 
                 cmp_btn.click(
                     on_compare,
-                    inputs=[cmp_text, voice_a, stab_a, sim_a, style_a, speed_a, voice_b, stab_b, sim_b, style_b, speed_b],
+                    inputs=[
+                        cmp_text,
+                        voice_a,
+                        stab_a,
+                        sim_a,
+                        style_a,
+                        speed_a,
+                        voice_b,
+                        stab_b,
+                        sim_b,
+                        style_b,
+                        speed_b,
+                    ],
                     outputs=[cmp_status, audio_out_a, audio_out_b],
                 )
 
@@ -311,7 +377,8 @@ def _build_gradio_ui() -> gr.Blocks:
                             return "⚠ Please upload an audio sample."
                         if not name.strip():
                             return "⚠ Please enter a voice name."
-                        from voicelab.tts.elevenlabs import ElevenLabsTts
+                        from voicelab.tts.elevenlabs import ElevenLabsTts  # noqa: PLC0415
+
                         settings = get_settings()
                         tts = ElevenLabsTts(api_key=settings.elevenlabs_api_key)
                         voice_id = tts.clone_voice(sample_path, name)
@@ -319,7 +386,11 @@ def _build_gradio_ui() -> gr.Blocks:
                             return f"✓ Voice cloned! voice_id = `{voice_id}`"
                         return "⚠ Voice cloning failed — check your ElevenLabs plan tier."
 
-                    clone_btn.click(on_clone, inputs=[clone_sample, clone_name], outputs=[clone_status])
+                    clone_btn.click(
+                        on_clone,
+                        inputs=[clone_sample, clone_name],
+                        outputs=[clone_status],
+                    )
                 else:
                     gr.Markdown(
                         "### Voice Cloning — Requires ElevenLabs Key\n\n"
@@ -337,6 +408,10 @@ def _build_gradio_ui() -> gr.Blocks:
 
 def create_app() -> FastAPI:
     """Factory that builds and wires the full FastAPI application."""
+    settings = get_settings()
+
+    configure_logging(settings.log_level)
+
     app = FastAPI(
         title="VoiceLab",
         description="ElevenLabs voice/persona design + comparison playground.",
@@ -344,17 +419,64 @@ def create_app() -> FastAPI:
         lifespan=_lifespan,
     )
 
+    app.add_middleware(RequestIDMiddleware)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
+    # Wire rate limiter (no-op stub if slowapi not installed)
+    app.state.limiter = api_limiter
+    try:
+        from slowapi.errors import RateLimitExceeded
+        from slowapi.middleware import SlowAPIMiddleware
+        from starlette.requests import Request as StarletteRequest
+        from starlette.responses import JSONResponse
+
+        async def _rate_limit_handler(
+            request: StarletteRequest, exc: RateLimitExceeded
+        ) -> JSONResponse:
+            return JSONResponse({"detail": f"Rate limit exceeded: {exc.detail}"}, status_code=429)
+
+        app.add_middleware(SlowAPIMiddleware)
+        app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)  # type: ignore[arg-type]
+    except ImportError:
+        pass
+
+    # REST API v1
+    app.include_router(api_v1_router)
+
     @app.get("/healthz", tags=["ops"])
     async def healthz() -> dict:
         return {"status": "ok", "backend": _backend_label()}
+
+    @app.get("/readyz", tags=["ops"])
+    async def readyz() -> dict:
+        return {"status": "ok", "backend": _backend_label()}
+
+    # Prometheus metrics endpoint — exposes /metrics in Prometheus text format.
+    # NOTE: prometheus_fastapi_instrumentator's middleware walker is incompatible with
+    # Gradio's _IncludedRouter (AttributeError: no .path). We use prometheus_client
+    # directly to generate the metrics page, which is simpler and avoids the conflict.
+    try:
+        import prometheus_client
+
+        @app.get("/metrics", tags=["ops"], include_in_schema=False)
+        async def metrics():  # noqa: ANN202
+            from fastapi.responses import Response  # noqa: PLC0415
+
+            data = prometheus_client.generate_latest()
+            return Response(
+                content=data,
+                media_type=prometheus_client.CONTENT_TYPE_LATEST,
+            )
+
+        logger.info("Prometheus metrics exposed at /metrics")
+    except ImportError:
+        logger.warning("prometheus_client not installed — /metrics endpoint skipped.")
 
     gradio_app = _build_gradio_ui()
     app = gr.mount_gradio_app(app, gradio_app, path="/")

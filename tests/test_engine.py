@@ -4,14 +4,12 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from voicelab.tts.local import LocalTts
-
 
 # ---------------------------------------------------------------------------
 # Keyless path — get_tts() must return LocalTts when no key
 # ---------------------------------------------------------------------------
+
 
 def test_get_tts_keyless_returns_local_tts():
     from voicelab.engine import get_tts
@@ -40,6 +38,7 @@ def test_get_tts_with_key_but_no_sdk_falls_back_to_local(monkeypatch):
 # LocalTts mock — synthesize returns bytes or None without raising
 # ---------------------------------------------------------------------------
 
+
 def test_local_tts_synthesize_with_pyttsx3_mocked():
     """Mock pyttsx3 engine so synthesize returns bytes without audio hardware."""
     fake_engine = MagicMock()
@@ -49,6 +48,7 @@ def test_local_tts_synthesize_with_pyttsx3_mocked():
     fake_wav = b"RIFF\x00\x00\x00\x00WAVEfmt "  # minimal WAV-like bytes
 
     import builtins
+
     import voicelab.tts.local as local_mod
 
     local_mod._PYTTSX3_AVAILABLE = None  # reset sentinel
@@ -121,6 +121,7 @@ def test_local_tts_list_voices_without_pyttsx3():
 # ElevenLabs mocked path
 # ---------------------------------------------------------------------------
 
+
 def test_get_tts_returns_elevenlabs_when_key_and_sdk_present(monkeypatch):
     """When key + SDK present, get_tts() returns ElevenLabsTts."""
     import voicelab.config.settings as settings_mod
@@ -138,14 +139,18 @@ def test_get_tts_returns_elevenlabs_when_key_and_sdk_present(monkeypatch):
     fake_client_class.return_value = fake_client_instance
 
     import sys
+
     fake_sdk = MagicMock()
     fake_sdk.client = fake_elevenlabs_module
     fake_sdk.client.ElevenLabs = fake_client_class
 
-    with patch.dict(sys.modules, {
-        "elevenlabs": fake_sdk,
-        "elevenlabs.client": fake_elevenlabs_module,
-    }):
+    with patch.dict(
+        sys.modules,
+        {
+            "elevenlabs": fake_sdk,
+            "elevenlabs.client": fake_elevenlabs_module,
+        },
+    ):
         from voicelab.engine import get_tts
         from voicelab.tts.elevenlabs import ElevenLabsTts
 
@@ -156,6 +161,7 @@ def test_get_tts_returns_elevenlabs_when_key_and_sdk_present(monkeypatch):
 # ---------------------------------------------------------------------------
 # compare() returns 2 entries
 # ---------------------------------------------------------------------------
+
 
 def test_compare_returns_two_entries():
     """compare() always returns one entry per voice, even on None audio."""

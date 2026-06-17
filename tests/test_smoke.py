@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
 
 def test_gradio_analytics_disabled():
@@ -13,9 +13,7 @@ def test_gradio_analytics_disabled():
     import voicelab  # noqa: F401 — triggers __init__ telemetry-off boot
 
     val = os.environ.get("GRADIO_ANALYTICS_ENABLED", "")
-    assert val.lower() in ("false", "0", ""), (
-        f"GRADIO_ANALYTICS_ENABLED={val!r} — must be falsy"
-    )
+    assert val.lower() in ("false", "0", ""), f"GRADIO_ANALYTICS_ENABLED={val!r} — must be falsy"
 
 
 def test_hf_telemetry_disabled():

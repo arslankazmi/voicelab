@@ -31,6 +31,7 @@ def main() -> None:
 
     if args.command == "serve":
         import uvicorn
+
         from voicelab.config.settings import get_settings
 
         settings = get_settings()

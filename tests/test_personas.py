@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
-from voicelab.personas import load_personas, Persona, PersonaSettings
+from voicelab.personas import Persona, PersonaSettings, load_personas
 
 
 def test_personas_load_returns_list():

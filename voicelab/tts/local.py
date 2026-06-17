@@ -20,12 +20,14 @@ def _try_import_pyttsx3():
     """Lazy import of pyttsx3; returns the module or None."""
     global _PYTTSX3_AVAILABLE
     if _PYTTSX3_AVAILABLE is True:
-        import pyttsx3  # type: ignore[import]
+        import pyttsx3  # noqa: PLC0415
+
         return pyttsx3
     if _PYTTSX3_AVAILABLE is False:
         return None
     try:
-        import pyttsx3  # type: ignore[import]
+        import pyttsx3  # noqa: PLC0415
+
         _PYTTSX3_AVAILABLE = True
         return pyttsx3
     except Exception:
@@ -54,10 +56,9 @@ class LocalTts:
             engine = pyttsx3.init()
             voices = engine.getProperty("voices") or []
             engine.stop()
-            return [
-                {"id": v.id, "name": v.name or v.id, "category": "local"}
-                for v in voices
-            ] or [{"id": "default", "name": "System Default"}]
+            return [{"id": v.id, "name": v.name or v.id, "category": "local"} for v in voices] or [
+                {"id": "default", "name": "System Default"}
+            ]
         except Exception:
             logger.warning("LocalTts.list_voices failed — returning stub", exc_info=True)
             return [{"id": "default", "name": "System Default (error)"}]
@@ -86,9 +87,7 @@ class LocalTts:
             speed_mult = float(settings.get("speed", 1.0))
             engine.setProperty("rate", int(rate * speed_mult))
 
-            with tempfile.NamedTemporaryFile(
-                suffix=".wav", dir="/tmp", delete=False
-            ) as tmp:
+            with tempfile.NamedTemporaryFile(suffix=".wav", dir="/tmp", delete=False) as tmp:
                 tmp_path = tmp.name
 
             engine.save_to_file(text, tmp_path)

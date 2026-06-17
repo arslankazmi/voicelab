@@ -12,7 +12,7 @@ Environment variables override config.yaml values; config.yaml overrides _DEFAUL
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -48,9 +48,17 @@ class Settings(BaseSettings):
 
     # App
     app_port: int = _DEFAULTS["app_port"]
+    log_level: str = "INFO"
+    cors_origins: list[str] = ["http://localhost:8001"]
+    auth_token: str | None = None
 
     # API keys — all Optional so the app boots without secrets
-    elevenlabs_api_key: Optional[str] = None
+    elevenlabs_api_key: str | None = None
+
+    # Resilience — ElevenLabs cloud calls
+    elevenlabs_timeout: float = 30.0  # seconds per attempt
+    elevenlabs_retries: int = 2  # retry attempts after first failure
+    elevenlabs_backoff_base: float = 0.5  # exponential backoff base seconds
 
 
 _settings: Settings | None = None

@@ -1,0 +1,230 @@
+"""REST API v1 — /api/v1/* endpoints for VoiceLab."""
+
+from __future__ import annotations
+
+import base64
+import dataclasses
+import logging
+import tempfile
+from collections.abc import Callable
+from typing import Any, TypeVar
+
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field
+
+from voicelab.auth import require_auth
+from voicelab.config.settings import get_settings
+from voicelab.engine import get_tts
+from voicelab.personas import load_personas
+
+logger = logging.getLogger(__name__)
+
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+# ---------------------------------------------------------------------------
+# Optional slowapi rate limiting — graceful no-op if not installed
+# ---------------------------------------------------------------------------
+
+try:
+    from slowapi import Limiter
+    from slowapi.util import get_remote_address
+
+    limiter: Any = Limiter(key_func=get_remote_address)
+
+    def _limit(rate: str) -> Callable[[_F], _F]:
+        return limiter.limit(rate)
+
+except ImportError:  # pragma: no cover
+    logger.warning(
+        "slowapi not installed — rate limiting disabled. Install with: uv pip install slowapi"
+    )
+
+    class _NoOpLimiter:
+        """Stub limiter exported so main.py can do `app.state.limiter = api_limiter`."""
+
+        pass
+
+    limiter = _NoOpLimiter()
+
+    def _limit(rate: str) -> Callable[[_F], _F]:  # noqa: F811
+        def decorator(fn: _F) -> _F:
+            return fn
+
+        return decorator
+
+
+# ---------------------------------------------------------------------------
+# Pydantic request/response models
+# ---------------------------------------------------------------------------
+
+
+class VoiceSettings(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    stability: float = Field(default=0.75, ge=0.0, le=1.0)
+    similarity_boost: float = Field(default=0.75, ge=0.0, le=1.0)
+    style: float = Field(default=0.0, ge=0.0, le=1.0)
+    speed: float = Field(default=1.0, ge=0.25, le=4.0)
+
+
+class SynthesizeRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    text: str = Field(max_length=5000)
+    voice: str = "default"
+    settings: VoiceSettings = Field(default_factory=VoiceSettings)
+
+
+class CompareRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    text: str = Field(max_length=5000)
+    voice_a: str = "default"
+    voice_b: str = "default"
+    settings: VoiceSettings = Field(default_factory=VoiceSettings)
+
+
+# ---------------------------------------------------------------------------
+# Router
+# ---------------------------------------------------------------------------
+
+router = APIRouter(
+    prefix="/api/v1",
+    tags=["v1"],
+    dependencies=[require_auth],
+)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/voices
+# ---------------------------------------------------------------------------
+
+
+@router.get("/voices")
+@_limit("60/minute")
+async def list_voices(request: Request) -> dict[str, Any]:
+    """Return available voices from the active TTS backend."""
+    tts = get_tts()
+    voices = tts.list_voices()
+    return {"voices": voices}
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/personas
+# ---------------------------------------------------------------------------
+
+
+@router.get("/personas")
+@_limit("60/minute")
+async def list_personas(request: Request) -> dict[str, Any]:
+    """Return all persona presets."""
+    personas = load_personas()
+    return {"personas": [dataclasses.asdict(p) for p in personas]}
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/synthesize
+# ---------------------------------------------------------------------------
+
+
+@router.post("/synthesize")
+@_limit("10/minute")
+async def synthesize(request: Request, body: SynthesizeRequest) -> StreamingResponse:
+    """Synthesize text to audio and stream the raw MP3 bytes."""
+    tts = get_tts()
+    audio_bytes = tts.synthesize(
+        body.text,
+        body.voice,
+        body.settings.model_dump(),
+    )
+    if audio_bytes is None:
+        raise HTTPException(status_code=503, detail="Synthesis failed")
+
+    return StreamingResponse(
+        iter([audio_bytes]),
+        media_type="audio/mpeg",
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/compare
+# ---------------------------------------------------------------------------
+
+
+@router.post("/compare")
+@_limit("60/minute")
+async def compare(request: Request, body: CompareRequest) -> dict[str, Any]:
+    """Synthesize text with two voices; return base64-encoded audio for each."""
+    tts = get_tts()
+    settings_dict = body.settings.model_dump()
+
+    audio_a = tts.synthesize(body.text, body.voice_a, settings_dict)
+    audio_b = tts.synthesize(body.text, body.voice_b, settings_dict)
+
+    return {
+        "voice_a": base64.b64encode(audio_a).decode() if audio_a is not None else None,
+        "voice_b": base64.b64encode(audio_b).decode() if audio_b is not None else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/clone
+# ---------------------------------------------------------------------------
+
+
+@router.post("/clone")
+@_limit("5/minute")
+async def clone_voice(
+    request: Request,
+    consent: bool = Form(...),  # noqa: B008
+    voice_name: str = Form(...),  # noqa: B008
+    sample: UploadFile = File(...),  # noqa: B008
+) -> dict[str, Any]:
+    """Clone a voice from an uploaded audio sample.
+
+    Requires ``consent=true`` and an ElevenLabs API key.
+    """
+    if not consent:
+        raise HTTPException(status_code=400, detail="Consent required for voice cloning")
+
+    settings = get_settings()
+    if not settings.elevenlabs_api_key:
+        raise HTTPException(
+            status_code=501,
+            detail="Voice cloning requires ElevenLabs API key. Set ELEVENLABS_API_KEY.",
+        )
+
+    # Write upload to a temp file
+    suffix = ""
+    if sample.filename:
+        for ext in (".mp3", ".wav", ".ogg", ".m4a", ".flac"):
+            if sample.filename.lower().endswith(ext):
+                suffix = ext
+                break
+
+    with tempfile.NamedTemporaryFile(
+        suffix=suffix or ".bin", prefix="voicelab_clone_", dir="/tmp", delete=False
+    ) as tmp:
+        tmp.write(await sample.read())
+        tmp_path = tmp.name
+
+    from voicelab.validation import validate_audio
+
+    try:
+        validate_audio(tmp_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    from voicelab.tts.elevenlabs import ElevenLabsTts
+
+    tts = ElevenLabsTts(api_key=settings.elevenlabs_api_key)
+    voice_id = tts.clone_voice(tmp_path, voice_name)
+
+    if voice_id is None:
+        raise HTTPException(
+            status_code=502,
+            detail="Voice cloning failed — check your ElevenLabs plan tier.",
+        )
+
+    return {"voice_id": voice_id}

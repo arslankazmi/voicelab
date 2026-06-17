@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
@@ -27,7 +27,7 @@ class Persona:
     sample_line: str
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Persona":
+    def from_dict(cls, data: dict) -> Persona:
         raw_settings = data.get("default_settings", {})
         settings = PersonaSettings(
             stability=float(raw_settings.get("stability", 0.75)),

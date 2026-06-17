@@ -13,6 +13,11 @@ def isolate_settings(monkeypatch):
     monkeypatch.setattr(settings_mod, "_settings", None)
     # Remove real API keys from environment so tests are keyless by default
     monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    monkeypatch.delenv("AUTH_TOKEN", raising=False)
+    # Protect telemetry-off env vars from being overwritten by gradio imports
+    monkeypatch.setenv("HF_HUB_DISABLE_TELEMETRY", "1")
+    monkeypatch.setenv("DISABLE_TELEMETRY", "1")
+    monkeypatch.setenv("GRADIO_ANALYTICS_ENABLED", "False")
     yield
     # Reset again after test
     settings_mod._settings = None
