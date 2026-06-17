@@ -125,6 +125,9 @@
       <div class="badge"><b>ElevenLabs</b><span>optional cloud</span></div>
       <div class="badge"><b>keyless</b><span>fallback</span></div>
     </div>
+    <div style="margin-top:14px;">
+      <a href="https://github.com/arslankazmi/voicelab/actions/workflows/ci.yml"><img src="https://github.com/arslankazmi/voicelab/actions/workflows/ci.yml/badge.svg" alt="CI" style="border-radius:6px;vertical-align:middle;" /></a>
+    </div>
   </div>
 </header>
 
@@ -331,10 +334,94 @@ ElevenLabsTts        LocalTts
   </div>
 </section>
 
+<!-- DEPLOY -->
+<section id="deploy">
+  <div class="wrap">
+    <h2><span class="num">06</span>Deploy</h2>
+    <p>VoiceLab ships a <code>Dockerfile</code> and <code>docker-compose.yml</code> for one-command deployment. The image runs as a non-root user (<code>uid 1000</code>) on port <code>8001</code>. The container health check polls <code>/healthz</code> every 30 s.</p>
+    <div class="term">
+      <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="ttl">docker compose</span></div>
+      <pre><span class="c-mut"># create .env with your key (omit for keyless mode)</span>
+<span class="c-h">echo "ELEVENLABS_API_KEY=sk-..." &gt; .env</span>
+
+<span class="c-mut"># build and start</span>
+<span class="c-h">docker compose up --build</span>
+<span class="c-ok"># voicelab running at http://localhost:8001</span>
+
+<span class="c-mut"># optional: add auth token</span>
+<span class="c-h">echo "AUTH_TOKEN=your-secret" &gt;&gt; .env</span></pre>
+    </div>
+    <p style="margin-top:16px;">Supported <code>.env</code> keys:</p>
+    <table>
+      <thead><tr><th>Variable</th><th>Default</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>ELEVENLABS_API_KEY</code></td><td><em>unset</em></td><td>Enables cloud synthesis + voice cloning. Omit for keyless/local mode.</td></tr>
+        <tr><td><code>AUTH_TOKEN</code></td><td><em>unset</em></td><td>Bearer token for <code>/api/v1/*</code> routes. Leave unset for open local use.</td></tr>
+        <tr><td><code>LOG_LEVEL</code></td><td><code>INFO</code></td><td>Root log level (DEBUG / INFO / WARNING / ERROR).</td></tr>
+        <tr><td><code>CORS_ORIGINS</code></td><td><code>["http://localhost:8001"]</code></td><td>JSON array of allowed CORS origins.</td></tr>
+        <tr><td><code>ELEVENLABS_TIMEOUT</code></td><td><code>30.0</code></td><td>Seconds before an ElevenLabs API call times out.</td></tr>
+        <tr><td><code>ELEVENLABS_RETRIES</code></td><td><code>2</code></td><td>Retry attempts after the first transient failure.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- API -->
+<section id="api">
+  <div class="wrap">
+    <h2><span class="num">07</span>API</h2>
+    <p>The REST API lives at <code>/api/v1</code>. Interactive docs are at <code>/docs</code> (Swagger UI) and <code>/redoc</code>. All routes accept and return JSON unless otherwise noted. When <code>AUTH_TOKEN</code> is set, include <code>Authorization: Bearer &lt;token&gt;</code> on every request.</p>
+
+    <h3 style="margin-top:24px;">Routes</h3>
+    <table>
+      <thead><tr><th>Method</th><th>Path</th><th>Rate limit</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET</code></td><td><code>/api/v1/voices</code></td><td>60/min</td><td>List available voices from the active backend.</td></tr>
+        <tr><td><code>GET</code></td><td><code>/api/v1/personas</code></td><td>60/min</td><td>List built-in persona presets.</td></tr>
+        <tr><td><code>POST</code></td><td><code>/api/v1/synthesize</code></td><td>10/min</td><td>Synthesize text → stream <code>audio/mpeg</code>. Body: <code>text</code> (max 5000 chars), <code>voice</code>, <code>settings</code>.</td></tr>
+        <tr><td><code>POST</code></td><td><code>/api/v1/compare</code></td><td>60/min</td><td>Synthesize with two voices; returns base64 audio for each. Body: <code>text</code>, <code>voice_a</code>, <code>voice_b</code>, <code>settings</code>.</td></tr>
+        <tr><td><code>POST</code></td><td><code>/api/v1/clone</code></td><td>5/min</td><td>Clone a voice (ElevenLabs key + consent required). Multipart form: <code>consent=true</code>, <code>voice_name</code>, <code>sample</code> (audio file ≤ 15 MB / 120 s).</td></tr>
+      </tbody>
+    </table>
+
+    <h3 style="margin-top:24px;">Voice cloning — consent gate</h3>
+    <p>The <code>/api/v1/clone</code> endpoint requires an explicit <code>consent=true</code> field. Without it the request is rejected with <code>HTTP 400</code>. Cloning also requires <code>ELEVENLABS_API_KEY</code> (returns <code>HTTP 501</code> if absent) and an ElevenLabs Professional plan or higher. Voice audio is biometric data — see <a href="https://github.com/arslankazmi/voicelab/blob/main/PRIVACY.md">PRIVACY.md</a>.</p>
+    <div class="term">
+      <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="ttl">curl examples</span></div>
+      <pre><span class="c-mut"># synthesize</span>
+<span class="c-h">curl -X POST http://localhost:8001/api/v1/synthesize \</span>
+<span class="c-h">  -H "Content-Type: application/json" \</span>
+<span class="c-h">  -d '{"text":"Hello world","voice":"Rachel","settings":{"stability":0.75}}' \</span>
+<span class="c-h">  --output out.mp3</span>
+
+<span class="c-mut"># compare two voices</span>
+<span class="c-h">curl -X POST http://localhost:8001/api/v1/compare \</span>
+<span class="c-h">  -H "Content-Type: application/json" \</span>
+<span class="c-h">  -d '{"text":"Hello","voice_a":"Rachel","voice_b":"Adam"}'</span>
+
+<span class="c-mut"># clone (requires key + consent)</span>
+<span class="c-h">curl -X POST http://localhost:8001/api/v1/clone \</span>
+<span class="c-h">  -F "consent=true" -F "voice_name=MyVoice" -F "sample=@sample.wav"</span></pre>
+    </div>
+
+    <h3 style="margin-top:24px;">Ops endpoints</h3>
+    <table>
+      <thead><tr><th>Endpoint</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /healthz</code></td><td>Liveness — returns <code>{"status":"ok","backend":"ElevenLabs"|"Local (system TTS fallback)"}</code></td></tr>
+        <tr><td><code>GET /readyz</code></td><td>Readiness — same shape as <code>/healthz</code></td></tr>
+        <tr><td><code>GET /metrics</code></td><td>Prometheus text format. Custom metrics: <code>tts_calls_total</code>, <code>tts_latency_seconds</code> (labels: <code>backend</code>, <code>outcome</code>).</td></tr>
+        <tr><td><code>GET /docs</code></td><td>Swagger UI (OpenAPI 3.1)</td></tr>
+        <tr><td><code>GET /redoc</code></td><td>ReDoc UI</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
 <!-- CODE LAYOUT -->
 <section id="layout">
   <div class="wrap">
-    <h2><span class="num">06</span>Code layout</h2>
+    <h2><span class="num">08</span>Code layout</h2>
     <div class="tree"><span class="dim">voicelab/</span>
 ├─ <span class="d">voicelab/</span>
 │  ├─ <span class="d">app/</span>

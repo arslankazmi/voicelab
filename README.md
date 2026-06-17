@@ -1,5 +1,7 @@
 # VoiceLab — ElevenLabs voice/persona playground
 
+[![CI](https://github.com/arslankazmi/voicelab/actions/workflows/ci.yml/badge.svg)](https://github.com/arslankazmi/voicelab/actions/workflows/ci.yml)
+
 Design, compare, and clone agent voices without writing a line of Python. VoiceLab is a local Gradio + FastAPI UI backed by ElevenLabs — or your system's built-in TTS if you have no API key.
 
 > 📖 Live docs: https://arslankazmi.github.io/voicelab/
@@ -84,6 +86,37 @@ export ELEVENLABS_API_KEY=your_key_here
 uv run voicelab serve --port 8001
 ```
 
+## Deploy
+
+```bash
+# create .env (omit ELEVENLABS_API_KEY for keyless/local mode)
+echo "ELEVENLABS_API_KEY=sk-..." > .env
+
+# build and start
+docker compose up --build
+# open http://localhost:8001
+```
+
+Optional `.env` keys: `AUTH_TOKEN` (bearer auth for `/api/v1/*`), `LOG_LEVEL`, `CORS_ORIGINS`.
+
+## API
+
+Base: `http://localhost:8001/api/v1`
+Interactive docs: `/docs` (Swagger UI), `/redoc`
+
+| Method | Path | Rate limit | Notes |
+|---|---|---|---|
+| GET | `/api/v1/voices` | 60/min | List voices from active backend |
+| GET | `/api/v1/personas` | 60/min | List persona presets |
+| POST | `/api/v1/synthesize` | 10/min | Body: `text` (max 5000), `voice`, `settings`. Returns `audio/mpeg` stream. |
+| POST | `/api/v1/compare` | 60/min | Body: `text`, `voice_a`, `voice_b`, `settings`. Returns base64 audio pair. |
+| POST | `/api/v1/clone` | 5/min | Multipart: `consent=true`, `voice_name`, `sample` (≤15 MB/120 s). Requires ElevenLabs key + Professional plan. |
+| GET | `/healthz` | — | `{"status":"ok","backend":"..."}` |
+| GET | `/readyz` | — | Same as `/healthz` |
+| GET | `/metrics` | — | Prometheus text format; `tts_calls_total`, `tts_latency_seconds` |
+
+When `AUTH_TOKEN` is set, include `Authorization: Bearer <token>` on all `/api/v1/*` requests.
+
 ## Development
 
 All 17 tests run without an ElevenLabs key or audio hardware:
@@ -97,4 +130,4 @@ The backends degrade gracefully in CI — `LocalTts` logs a warning if pyttsx3 i
 
 ## License & credits
 
-MIT. See [ASSET_CREDITS.md](ASSET_CREDITS.md) for library and service attributions.
+Apache-2.0. See [LICENSE](LICENSE) and [ASSET_CREDITS.md](ASSET_CREDITS.md) for library and service attributions.
