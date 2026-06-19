@@ -11,8 +11,11 @@ def isolate_settings(monkeypatch):
     import voicelab.config.settings as settings_mod
 
     monkeypatch.setattr(settings_mod, "_settings", None)
-    # Remove real API keys from environment so tests are keyless by default
-    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    # ELEVENLABS_API_KEY lives in the .env FILE, so set "" (an env var overrides
+    # the .env file in pydantic-settings) — a developer's local .env can't leak a
+    # real key into the suite. AUTH_TOKEN is not in .env, so delenv is correct
+    # (setting it "" is fine for keylessness but delenv keeps behavior identical).
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "")
     monkeypatch.delenv("AUTH_TOKEN", raising=False)
     # Protect telemetry-off env vars from being overwritten by gradio imports
     monkeypatch.setenv("HF_HUB_DISABLE_TELEMETRY", "1")
