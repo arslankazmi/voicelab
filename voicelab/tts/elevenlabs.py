@@ -27,6 +27,28 @@ _DEFAULT_RETRIES: int = 2
 _DEFAULT_BACKOFF: float = 0.5
 
 
+def _resolve_voice_id(voice: str, voices: list[dict]) -> str | None:
+    """Resolve a voice name / id / 'default' to a valid account voice_id.
+
+    The ElevenLabs API needs a real ``voice_id`` (e.g. ``CwhRBWXzGAHq8TQ4Fs17``),
+    not a display name. We accept an id (pass-through), a name (exact or prefix
+    match, case-insensitive), or ``default``/empty (→ the account's first voice).
+    Returns None only when the account exposes no voices.
+    """
+    if not voices:
+        return voice if voice and voice not in ("default", "auto", "") else None
+    ids = {v["id"] for v in voices}
+    if voice in ids:
+        return voice
+    if voice and voice not in ("default", "auto", ""):
+        vl = voice.lower()
+        for v in voices:
+            name = str(v.get("name", "")).lower()
+            if name == vl or name.startswith(vl):
+                return v["id"]
+    return voices[0]["id"]
+
+
 class ElevenLabsTts:
     """TTS backend using the ElevenLabs SDK.
 
@@ -52,6 +74,13 @@ class ElevenLabsTts:
         self._timeout = timeout
         self._retries = retries
         self._backoff_base = backoff_base
+        self._voices_cache: list[dict] | None = None
+
+    def _voices(self) -> list[dict]:
+        """Cached account voices (one fetch per instance)."""
+        if self._voices_cache is None:
+            self._voices_cache = self.list_voices()
+        return self._voices_cache
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -127,9 +156,15 @@ class ElevenLabsTts:
                 use_speaker_boost=True,
             )
 
+            voice_id = _resolve_voice_id(voice, self._voices())
+            if voice_id is None:
+                logger.warning("ElevenLabs: no voices available on account for voice=%r", voice)
+                self._record("synthesize", start, "error")
+                return None
+
             def _call() -> bytes | None:
                 audio_iter = self._client.text_to_speech.convert(
-                    voice_id=voice,
+                    voice_id=voice_id,
                     text=text,
                     model_id="eleven_multilingual_v2",
                     voice_settings=voice_settings,
