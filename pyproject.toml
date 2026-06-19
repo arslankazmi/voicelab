@@ -19,6 +19,7 @@ dependencies = [
     "kokoro-onnx>=0.4.0",
     "piper-tts>=1.4.0",
     "huggingface-hub>=0.20",
+    "psutil>=5.9",  # system-RAM preflight before loading heavy torch models (OOM safety)
 ]
 
 [project.optional-dependencies]
@@ -30,9 +31,9 @@ kokoro = ["kokoro-onnx>=0.4.0", "huggingface-hub>=0.20"]
 # Piper ONNX TTS — torch-free, CPU/cross-platform (MIT)
 # Voice models (.onnx) are downloaded from HF hub on first use.
 piper = ["piper-tts>=1.4.0", "huggingface-hub>=0.20"]
-# Chatterbox TTS — keyless local voice cloning (MIT) — PULLS TORCH
-# Heavy: ~1.5 GB download. Only install when you need keyless cloning.
-clone = ["chatterbox-tts>=0.1.0"]
+# Chatterbox TTS — keyless local voice cloning + Turbo engine (MIT) — PULLS TORCH
+# Heavy: ~1.5 GB download. >=0.1.7 ships chatterbox.tts_turbo (ChatterboxTurboTTS).
+clone = ["chatterbox-tts>=0.1.7"]
 
 [project.scripts]
 voicelab = "voicelab.cli:main"
@@ -42,6 +43,9 @@ dev = ["pytest>=8", "pytest-asyncio>=0.24", "httpx>=0.27", "mypy>=1.10", "ruff>=
 
 [tool.uv]
 default-groups = ["dev"]
+# chatterbox-tts (>=0.1.7) declares numpy<2 while kokoro-onnx needs numpy>=2.0.2;
+# force numpy 2.x so both coexist. Chatterbox runs fine on numpy 2.x in practice.
+override-dependencies = ["numpy>=2.0.2"]
 
 [build-system]
 requires = ["hatchling"]
@@ -59,6 +63,7 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "W"]
+ignore = ["E501"]  # the formatter handles line length
 
 [tool.mypy]
 python_version = "3.12"

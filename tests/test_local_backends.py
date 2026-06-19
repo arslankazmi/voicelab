@@ -419,7 +419,10 @@ class TestChatterboxTtsMocked:
 
         assert result is not None
         assert result[:4] == b"RIFF"
-        fake_model.generate.assert_called_once_with("test text", exaggeration=0.8, cfg_weight=0.3)
+        # exaggeration=0.8 → temperature = clamp(0.5+0.8, 0.3, 1.5) = 1.3
+        fake_model.generate.assert_called_once_with(
+            "test text", exaggeration=0.8, cfg_weight=0.3, temperature=pytest.approx(1.3)
+        )
 
     def test_synthesize_passes_reference_audio_for_cloning(self):
         """When reference_audio is given, model.generate() receives audio_prompt_path."""
@@ -453,11 +456,13 @@ class TestChatterboxTtsMocked:
 
         assert result is not None
         assert result[:4] == b"RIFF"
+        # exaggeration=0.5 → temperature = clamp(0.5+0.5, 0.3, 1.5) = 1.0
         fake_model.generate.assert_called_once_with(
             "clone me",
             audio_prompt_path="/tmp/ref.wav",
             exaggeration=0.5,
             cfg_weight=0.5,
+            temperature=pytest.approx(1.0),
         )
 
     def test_synthesize_graceful_none_on_exception(self):

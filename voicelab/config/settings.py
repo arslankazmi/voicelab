@@ -53,7 +53,11 @@ class Settings(BaseSettings):
     auth_token: str | None = None
 
     # TTS engine selection — "auto" | "elevenlabs" | "kokoro" | "piper" | "local"
+    #   | "chatterbox" | "chatterbox-turbo"
     tts_engine: str = "auto"
+    # OOM safety: refuse to load a heavy (torch) TTS model — Chatterbox / Turbo —
+    # when system free RAM is below this floor (MB), so the host is never OOM-crashed.
+    min_free_memory_mb: int = 3000
 
     # API keys — all Optional so the app boots without secrets
     elevenlabs_api_key: str | None = None

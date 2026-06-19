@@ -20,9 +20,18 @@ from typing import Literal
 
 logger = logging.getLogger(__name__)
 
-EngineKey = Literal["auto", "elevenlabs", "kokoro", "piper", "local", "chatterbox"]
+EngineKey = Literal[
+    "auto", "elevenlabs", "kokoro", "piper", "local", "chatterbox", "chatterbox-turbo"
+]
 
-_ALL_ENGINES: tuple[str, ...] = ("elevenlabs", "kokoro", "piper", "local", "chatterbox")
+_ALL_ENGINES: tuple[str, ...] = (
+    "elevenlabs",
+    "kokoro",
+    "piper",
+    "local",
+    "chatterbox",
+    "chatterbox-turbo",
+)
 
 
 @dataclass
@@ -79,6 +88,20 @@ _REGISTRY: list[BackendInfo] = [
         notes="System TTS: pyttsx3 or macOS say/afconvert. Always available.",
         requires_key=False,
         tags=["local", "system"],
+    ),
+    BackendInfo(
+        name="chatterbox-turbo",
+        priority=45,
+        package="chatterbox-tts",
+        import_check="chatterbox.tts_turbo",
+        license="MIT",
+        notes=(
+            "350M one-step Chatterbox Turbo; faster than base Chatterbox. "
+            "Requires [clone] extra (chatterbox-tts>=0.1.7, pulls torch). "
+            "Install: uv sync --extra clone"
+        ),
+        requires_key=False,
+        tags=["local", "turbo", "torch", "emotion", "cloning"],
     ),
     BackendInfo(
         name="chatterbox",
@@ -198,5 +221,10 @@ def _instantiate(info: BackendInfo, *, api_key: str | None = None):  # noqa: ANN
         from voicelab.tts.chatterbox import ChatterboxTts
 
         return ChatterboxTts()
+
+    if info.name == "chatterbox-turbo":
+        from voicelab.tts.chatterbox_turbo import ChatterboxTurboTts
+
+        return ChatterboxTurboTts()
 
     return None
