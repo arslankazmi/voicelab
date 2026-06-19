@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>VoiceLab — TTS Grid</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #0b0a12;
+    --bg-2: #110f1b;
+    --surface: #171526;
+    --surface-2: #1d1a2e;
+    --border: #272338;
+    --border-strong: #382f53;
+    --text: #ece9f5;
+    --text-dim: #a39bba;
+    --text-faint: #6b6383;
+    --accent: #a855f7;
+    --accent-2: #7c3aed;
+    --accent-soft: rgba(168, 85, 247, 0.13);
+    --good: #58d6a0;
+    --warn: #f4b860;
+    --bad: #f1766b;
+    --radius: 14px;
+    --radius-sm: 9px;
+    --font-head: "Fraunces", Georgia, serif;
+    --font-body: "IBM Plex Sans", system-ui, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+    --maxw: 1200px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background:
+      radial-gradient(1100px 560px at 82% -12%, rgba(124,58,237,0.13), transparent 60%),
+      radial-gradient(820px 460px at -6% 0%, rgba(168,85,247,0.08), transparent 55%),
+      var(--bg);
+    color: var(--text); font-family: var(--font-body); line-height: 1.5;
+    -webkit-font-smoothing: antialiased; min-height: 100vh;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  ::selection { background: var(--accent-soft); }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 26px; }
+
+  header { border-bottom: 1px solid var(--border); background: linear-gradient(var(--bg-2), transparent);
+    position: sticky; top: 0; z-index: 20; backdrop-filter: blur(8px); }
+  .bar { display: flex; align-items: center; gap: 18px; padding: 16px 0; }
+  .mark { font-family: var(--font-head); font-size: 22px; letter-spacing: -0.02em; font-weight: 600; }
+  .mark .dot { color: var(--accent); }
+  .tag { color: var(--text-dim); font-size: 13px; border-left: 1px solid var(--border-strong); padding-left: 16px; }
+  .spacer { flex: 1; }
+  .pill { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-dim);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 999px;
+    padding: 6px 12px; display: inline-flex; align-items: center; gap: 7px; }
+
+  .hero { padding: 38px 0 8px; }
+  .hero h1 { font-family: var(--font-head); font-weight: 400; letter-spacing: -0.02em;
+    font-size: clamp(28px, 4.6vw, 42px); line-height: 1.06; margin: 0 0 10px; max-width: 20ch; }
+  .hero h1 em { font-style: italic; color: var(--accent); }
+  .hero p { color: var(--text-dim); max-width: 60ch; margin: 0; font-size: 15px; }
+
+  .controls { display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: end;
+    margin: 24px 0 8px; padding: 18px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+  @media (max-width: 760px) { .controls { grid-template-columns: 1fr; } }
+  textarea { width: 100%; resize: vertical; min-height: 70px; font-family: var(--font-body);
+    font-size: 14.5px; color: var(--text); background: var(--bg-2); border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm); padding: 12px 14px; outline: none; }
+  textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .sliders { display: flex; gap: 18px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  .slider { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--text-dim);
+    font-family: var(--font-mono); }
+  .slider input { accent-color: var(--accent); width: 150px; }
+  .right { display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
+  .btn { font-family: var(--font-body); font-size: 14.5px; font-weight: 600; cursor: pointer;
+    border-radius: var(--radius-sm); padding: 13px 20px; border: 1px solid transparent;
+    background: linear-gradient(180deg, var(--accent), var(--accent-2)); color: #fff;
+    transition: transform .05s, box-shadow .15s; white-space: nowrap; }
+  .btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 10px 24px -12px var(--accent); }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; padding: 16px 0 60px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 18px; display: flex; flex-direction: column; gap: 12px; transition: border-color .15s; }
+  .card.unavail { opacity: 0.72; }
+  .card .head { display: flex; align-items: center; gap: 10px; }
+  .card .ename { font-family: var(--font-head); font-size: 19px; font-weight: 600; letter-spacing: -0.01em; flex: 1; text-transform: capitalize; }
+  .led { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); flex-shrink: 0; }
+  .led.ok { background: var(--good); box-shadow: 0 0 0 3px rgba(88,214,160,0.16); }
+  .led.no { background: var(--text-faint); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.03em; color: var(--text-dim);
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 3px 7px; }
+  .lic { font-size: 11.5px; color: var(--text-faint); }
+  .slot { min-height: 54px; display: flex; align-items: center; }
+  .slot audio { width: 100%; height: 38px; }
+  .muted { color: var(--text-faint); font-size: 12.5px; font-style: italic; }
+  .latency { font-family: var(--font-mono); font-size: 11px; color: var(--good); margin-left: auto; }
+  .spin { width: 16px; height: 16px; border: 2px solid var(--border-strong); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin .7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .err { color: var(--bad); font-size: 12.5px; }
+
+  footer { border-top: 1px solid var(--border); color: var(--text-faint); font-size: 12.5px; }
+  footer .bar { padding: 20px 0; }
+  .font-mono { font-family: var(--font-mono); }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap bar">
+    <span class="mark">VoiceLab<span class="dot">.</span></span>
+    <span class="tag">TTS grid</span>
+    <span class="spacer"></span>
+    <span class="pill" id="count">loading engines…</span>
+  </div>
+</header>
+
+<main>
+  <section class="wrap hero">
+    <h1>Hear one line across <em>every engine</em>.</h1>
+    <p>Type a line, synthesize it on every available TTS backend at once, and compare quality and latency side by side. Local ONNX models run free; cloud + cloning backends activate when their key or extra is installed.</p>
+
+    <div class="controls">
+      <div>
+        <textarea id="text">I understand the budget is tight, but eighteen percent reflects the scope I've taken on — I'm confident it's the right number.</textarea>
+        <div class="sliders">
+          <label class="slider">Emotion / exaggeration (Chatterbox) — <span id="exagv">0.50</span>
+            <input type="range" id="exag" min="0" max="1" step="0.05" value="0.5" />
+          </label>
+          <label class="slider">Speed — <span id="speedv">1.00</span>
+            <input type="range" id="speed" min="0.5" max="1.5" step="0.05" value="1.0" />
+          </label>
+        </div>
+      </div>
+      <div class="right">
+        <button class="btn" id="synth">Synthesize across engines</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="wrap">
+    <div class="grid" id="grid"></div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap bar">
+    <span>VoiceLab — open-source voice stack. <span class="font-mono">Kokoro · Piper · Chatterbox · ElevenLabs · system TTS</span></span>
+    <span class="spacer"></span>
+    <a href="/api/v1/docs">API</a>
+  </div>
+</footer>
+
+<script>
+const API = "/api/v1";
+const $ = s => document.querySelector(s);
+const el = (t, c, html) => { const e = document.createElement(t); if (c) e.className = c; if (html != null) e.innerHTML = html; return e; };
+const esc = s => (s || "").replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+let engines = [];
+
+async function loadEngines() {
+  try {
+    const r = await fetch(`${API}/engines`);
+    const data = await r.json();
+    engines = data.engines || [];
+    renderGrid();
+    const n = engines.filter(e => e.available).length;
+    $("#count").textContent = `${n}/${engines.length} engines available`;
+  } catch (e) {
+    $("#count").textContent = "failed to load engines";
+  }
+}
+
+function renderGrid() {
+  const grid = $("#grid"); grid.innerHTML = "";
+  engines.forEach(eng => {
+    const card = el("div", "card" + (eng.available ? "" : " unavail"));
+    card.id = `card-${eng.name}`;
+    const head = el("div", "head");
+    head.appendChild(el("span", "led " + (eng.available ? "ok" : "no")));
+    head.appendChild(el("span", "ename", esc(eng.name)));
+    head.appendChild(el("span", "lic", esc(eng.license || "")));
+    card.appendChild(head);
+
+    const chips = el("div", "chips");
+    (eng.tags || []).forEach(t => chips.appendChild(el("span", "chip", esc(t))));
+    if (eng.requires_key) chips.appendChild(el("span", "chip", "needs key"));
+    card.appendChild(chips);
+
+    const slot = el("div", "slot");
+    slot.id = `slot-${eng.name}`;
+    if (eng.available) {
+      slot.appendChild(el("span", "muted", "Ready — click Synthesize."));
+    } else {
+      slot.appendChild(el("span", "muted", esc(eng.notes || "Unavailable.")));
+    }
+    card.appendChild(slot);
+    grid.appendChild(card);
+  });
+}
+
+function settings() {
+  return {
+    exaggeration: parseFloat($("#exag").value),
+    cfg_weight: 0.5,
+    speed: parseFloat($("#speed").value),
+  };
+}
+
+async function synthOne(eng) {
+  const slot = $(`#slot-${eng.name}`);
+  slot.innerHTML = ""; slot.appendChild(el("span", "spin"));
+  const t0 = performance.now();
+  try {
+    const r = await fetch(`${API}/synthesize`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: $("#text").value, engine: eng.name, settings: settings() }),
+    });
+    if (r.status === 429) { slot.innerHTML = ""; slot.appendChild(el("span", "err", "rate-limited — wait a moment")); return; }
+    if (!r.ok) {
+      let d = `${r.status}`; try { d = (await r.json()).detail || d; } catch (_) {}
+      slot.innerHTML = ""; slot.appendChild(el("span", "err", "✗ " + esc(d))); return;
+    }
+    const blob = await r.blob();
+    const secs = ((performance.now() - t0) / 1000).toFixed(2);
+    slot.innerHTML = "";
+    const audio = el("audio"); audio.controls = true; audio.src = URL.createObjectURL(blob);
+    slot.appendChild(audio);
+    slot.appendChild(el("span", "latency", secs + "s"));
+  } catch (e) {
+    slot.innerHTML = ""; slot.appendChild(el("span", "err", "✗ " + esc(e.message)));
+  }
+}
+
+async function synthAll() {
+  const btn = $("#synth"); btn.disabled = true; btn.textContent = "Synthesizing…";
+  const avail = engines.filter(e => e.available);
+  await Promise.all(avail.map(synthOne));   // parallel — fast engines fill first
+  btn.disabled = false; btn.textContent = "Synthesize across engines";
+}
+
+$("#exag").addEventListener("input", e => $("#exagv").textContent = parseFloat(e.target.value).toFixed(2));
+$("#speed").addEventListener("input", e => $("#speedv").textContent = parseFloat(e.target.value).toFixed(2));
+$("#synth").addEventListener("click", synthAll);
+loadEngines();
+</script>
+</body>
+</html>

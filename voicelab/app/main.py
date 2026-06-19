@@ -740,6 +740,16 @@ def create_app() -> FastAPI:
     except ImportError:
         logger.warning("prometheus_client not installed — /metrics endpoint skipped.")
 
+    @app.get("/grid", include_in_schema=False)
+    async def grid():
+        """Serve the handwritten TTS-grid page (compare every engine on one line)."""
+        from pathlib import Path
+
+        from fastapi.responses import FileResponse
+
+        html = Path(__file__).resolve().parent.parent / "static" / "grid.html"
+        return FileResponse(html, media_type="text/html")
+
     gradio_app = _build_gradio_ui()
     app = gr.mount_gradio_app(app, gradio_app, path="/")
 
