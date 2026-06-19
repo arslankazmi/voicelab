@@ -103,6 +103,34 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   .err { color: var(--bad); font-size: 12.5px; }
 
+  /* per-card stats */
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 14px; margin-top: 4px;
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
+  .stats .s { display: flex; justify-content: space-between; gap: 8px; }
+  .stats .s b { color: var(--text); font-weight: 500; }
+  .stats .s.rtf { grid-column: 1 / -1; padding-top: 4px; border-top: 1px solid var(--border); }
+  .stats .s.rtf b { color: var(--accent); }
+
+  /* run bar + controls */
+  .runbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 14px 0 2px; }
+  .runbar .count { font-family: var(--font-mono); font-size: 12.5px; color: var(--text-dim); }
+  .btn.sm { padding: 9px 14px; font-size: 13px; }
+  .btn.ghost { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
+  .btn.ghost:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); box-shadow: none; transform: none; }
+  .hidden { display: none !important; }
+
+  /* report panel */
+  .report { margin: 18px 0 40px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 20px; }
+  .report h2 { font-family: var(--font-head); font-weight: 600; font-size: 20px; margin: 0 0 4px; }
+  .report .sub { color: var(--text-dim); font-size: 13px; margin: 0 0 16px; }
+  table.lb { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.lb th, table.lb td { text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--border); font-family: var(--font-mono); }
+  table.lb th { color: var(--text-faint); font-weight: 500; font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase; }
+  table.lb td.eng, table.lb th.eng { text-align: left; font-family: var(--font-body); }
+  table.lb td.eng { font-weight: 500; color: var(--text); text-transform: capitalize; }
+  table.lb tr.win td { color: var(--good); }
+  table.lb .rank { color: var(--text-faint); width: 24px; }
+
   footer { border-top: 1px solid var(--border); color: var(--text-faint); font-size: 12.5px; }
   footer .bar { padding: 20px 0; }
   .font-mono { font-family: var(--font-mono); }
@@ -142,7 +170,15 @@
   </section>
 
   <section class="wrap">
+    <div class="runbar">
+      <span class="count" id="runcount">0 runs recorded</span>
+      <span class="spacer"></span>
+      <button class="btn ghost sm hidden" id="report-btn">Compute report</button>
+      <button class="btn ghost sm hidden" id="export-btn">Export</button>
+      <button class="btn ghost sm hidden" id="clear-btn">Clear runs</button>
+    </div>
     <div class="grid" id="grid"></div>
+    <div class="report hidden" id="report"></div>
   </section>
 </main>
 
@@ -161,6 +197,12 @@ const el = (t, c, html) => { const e = document.createElement(t); if (c) e.class
 const esc = s => (s || "").replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
 let engines = [];
+let audioCtx = null;
+const LS_KEY = "vl_grid_runs";
+
+function loadRuns() { try { return JSON.parse(localStorage.getItem(LS_KEY)) || []; } catch (_) { return []; } }
+function saveRuns() { try { localStorage.setItem(LS_KEY, JSON.stringify(runs)); } catch (_) {} }
+let runs = loadRuns();   // [{ ts, text, results: [{engine, ...metrics}] }]
 
 async function loadEngines() {
   try {
@@ -211,41 +253,160 @@ function settings() {
   };
 }
 
+async function decodeDuration(blob) {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const buf = await audioCtx.decodeAudioData(await blob.arrayBuffer());
+    return buf.duration;
+  } catch (_) { return null; }
+}
+
+function renderStats(slot, m) {
+  const stats = el("div", "stats");
+  const row = (k, v, cls) => { const s = el("div", "s" + (cls ? " " + cls : "")); s.innerHTML = `<span>${k}</span><b>${v}</b>`; return s; };
+  const s2 = v => v == null ? "—" : v.toFixed(2) + "s";
+  stats.appendChild(row("synth", s2(m.synth_s)));
+  stats.appendChild(row("round-trip", s2(m.round_trip_s)));
+  stats.appendChild(row("server", s2(m.server_s)));
+  stats.appendChild(row("network", m.transport_s == null ? "—" : (m.transport_s * 1000).toFixed(0) + "ms"));
+  stats.appendChild(row("audio", s2(m.audio_s)));
+  stats.appendChild(row("size", (m.bytes / 1024).toFixed(0) + " KB " + m.fmt));
+  stats.appendChild(row("RTF", m.rtf == null ? "—" : m.rtf.toFixed(2) + "×" + (m.rtf < 1 ? " · faster than real-time" : ""), "rtf"));
+  slot.appendChild(stats);
+}
+
 async function synthOne(eng) {
   const slot = $(`#slot-${eng.name}`);
   slot.innerHTML = ""; slot.appendChild(el("span", "spin"));
+  const text = $("#text").value;
   const t0 = performance.now();
   try {
     const r = await fetch(`${API}/synthesize`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: $("#text").value, engine: eng.name, settings: settings() }),
+      body: JSON.stringify({ text, engine: eng.name, settings: settings() }),
     });
-    if (r.status === 429) { slot.innerHTML = ""; slot.appendChild(el("span", "err", "rate-limited — wait a moment")); return; }
+    const round_trip_s = (performance.now() - t0) / 1000;
+    if (r.status === 429) { slot.innerHTML = ""; slot.appendChild(el("span", "err", "rate-limited — wait a moment")); return null; }
     if (!r.ok) {
       let d = `${r.status}`; try { d = (await r.json()).detail || d; } catch (_) {}
-      slot.innerHTML = ""; slot.appendChild(el("span", "err", "✗ " + esc(d))); return;
+      slot.innerHTML = ""; slot.appendChild(el("span", "err", "✗ " + esc(d))); return null;
     }
+    const synth_s = parseFloat(r.headers.get("X-Synth-Seconds")) || null;
+    const server_s = parseFloat(r.headers.get("X-Server-Seconds")) || null;
+    const fmt = r.headers.get("X-Audio-Format") || "?";
     const blob = await r.blob();
-    const secs = ((performance.now() - t0) / 1000).toFixed(2);
+    const bytes = blob.size;
+    const audio_s = await decodeDuration(blob);
+    const transport_s = server_s != null ? Math.max(0, round_trip_s - server_s) : null;
+    const rtf = (synth_s != null && audio_s) ? synth_s / audio_s : null;
+    const chars_per_sec = synth_s ? text.length / synth_s : null;
+    const m = { engine: eng.name, synth_s, server_s, round_trip_s, transport_s, audio_s, rtf, chars_per_sec, bytes, fmt };
+
     slot.innerHTML = "";
     const audio = el("audio"); audio.controls = true; audio.src = URL.createObjectURL(blob);
     slot.appendChild(audio);
-    slot.appendChild(el("span", "latency", secs + "s"));
+    renderStats(slot, m);
+    return m;
   } catch (e) {
     slot.innerHTML = ""; slot.appendChild(el("span", "err", "✗ " + esc(e.message)));
+    return null;
   }
 }
 
 async function synthAll() {
   const btn = $("#synth"); btn.disabled = true; btn.textContent = "Synthesizing…";
   const avail = engines.filter(e => e.available);
-  await Promise.all(avail.map(synthOne));   // parallel — fast engines fill first
+  const results = (await Promise.all(avail.map(synthOne))).filter(Boolean);   // parallel — fast engines fill first
   btn.disabled = false; btn.textContent = "Synthesize across engines";
+  if (results.length) {
+    runs.push({ ts: new Date().toISOString(), text: $("#text").value, results });
+    saveRuns(); updateRunbar();
+  }
+}
+
+// ---- cross-run stats ----
+const _mean = a => a.reduce((x, y) => x + y, 0) / a.length;
+const _median = a => { const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+const _p95 = a => { const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(0.95 * s.length))]; };
+const _stdev = a => { if (a.length < 2) return 0; const mu = _mean(a); return Math.sqrt(_mean(a.map(x => (x - mu) ** 2))); };
+
+function perEngine() {
+  const by = {};
+  runs.forEach(run => run.results.forEach(m => { (by[m.engine] = by[m.engine] || []).push(m); }));
+  return by;
+}
+
+function updateRunbar() {
+  const n = runs.length;
+  $("#runcount").textContent = `${n} run${n === 1 ? "" : "s"} recorded`;
+  $("#export-btn").classList.toggle("hidden", n === 0);
+  $("#clear-btn").classList.toggle("hidden", n === 0);
+  $("#report-btn").classList.toggle("hidden", n < 5);
+  $("#report-btn").textContent = `Compute report (${n} runs)`;
+}
+
+function computeReport() {
+  const by = perEngine();
+  const f = (v, suf = "s") => v == null ? "—" : v.toFixed(2) + suf;
+  const rows = Object.entries(by).map(([engine, ms]) => {
+    const synth = ms.map(m => m.synth_s).filter(v => v != null);
+    const rtfs = ms.map(m => m.rtf).filter(v => v != null);
+    const rts = ms.map(m => m.round_trip_s).filter(v => v != null);
+    return {
+      engine, n: ms.length,
+      synth_med: synth.length ? _median(synth) : null,
+      synth_mean: synth.length ? _mean(synth) : null,
+      synth_p95: synth.length ? _p95(synth) : null,
+      synth_sd: synth.length ? _stdev(synth) : null,
+      rtf_med: rtfs.length ? _median(rtfs) : null,
+      rt_med: rts.length ? _median(rts) : null,
+    };
+  }).sort((a, b) => (a.synth_med ?? 1e9) - (b.synth_med ?? 1e9));
+
+  const rep = $("#report"); rep.classList.remove("hidden"); rep.innerHTML = "";
+  rep.appendChild(el("h2", null, "Benchmark report"));
+  rep.appendChild(el("p", "sub", `${runs.length} runs · ranked by median synthesis time (lower = faster)`));
+  const t = el("table", "lb");
+  t.innerHTML = `<thead><tr><th class="rank"></th><th class="eng">engine</th><th>runs</th>` +
+    `<th>synth med</th><th>mean</th><th>p95</th><th>stdev</th><th>RTF med</th><th>round-trip</th></tr></thead>`;
+  const tb = el("tbody");
+  rows.forEach((r, i) => {
+    const tr = el("tr", i === 0 ? "win" : "");
+    tr.innerHTML = `<td class="rank">${i + 1}</td><td class="eng">${esc(r.engine)}</td><td>${r.n}</td>` +
+      `<td>${f(r.synth_med)}</td><td>${f(r.synth_mean)}</td><td>${f(r.synth_p95)}</td><td>${f(r.synth_sd)}</td>` +
+      `<td>${f(r.rtf_med, "×")}</td><td>${f(r.rt_med)}</td>`;
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb); rep.appendChild(t);
+  rep.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function _download(name, type, content) {
+  const a = el("a"); a.href = URL.createObjectURL(new Blob([content], { type })); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+function exportData() {
+  _download("voicelab-grid-runs.json", "application/json", JSON.stringify({ exported: new Date().toISOString(), runs }, null, 2));
+  const cols = ["ts", "engine", "synth_s", "server_s", "round_trip_s", "transport_s", "audio_s", "rtf", "chars_per_sec", "bytes", "fmt"];
+  const lines = [cols.join(",")];
+  runs.forEach(run => run.results.forEach(m => {
+    lines.push(cols.map(c => (c === "ts" ? run.ts : (m[c] ?? ""))).join(","));
+  }));
+  _download("voicelab-grid-runs.csv", "text/csv", lines.join("\n"));
+}
+function clearRuns() {
+  if (!confirm("Clear all recorded runs?")) return;
+  runs = []; saveRuns(); updateRunbar();
+  $("#report").classList.add("hidden"); $("#report").innerHTML = "";
 }
 
 $("#exag").addEventListener("input", e => $("#exagv").textContent = parseFloat(e.target.value).toFixed(2));
 $("#speed").addEventListener("input", e => $("#speedv").textContent = parseFloat(e.target.value).toFixed(2));
 $("#synth").addEventListener("click", synthAll);
+$("#report-btn").addEventListener("click", computeReport);
+$("#export-btn").addEventListener("click", exportData);
+$("#clear-btn").addEventListener("click", clearRuns);
+updateRunbar();
 loadEngines();
 </script>
 </body>
