@@ -6,6 +6,7 @@ import base64
 import dataclasses
 import logging
 import tempfile
+import time
 from collections.abc import Callable
 from typing import Any, TypeVar
 
@@ -175,23 +176,39 @@ async def list_personas(request: Request) -> dict[str, Any]:
 @router.post("/synthesize")
 @_limit("10/minute")
 async def synthesize(request: Request, body: SynthesizeRequest) -> StreamingResponse:
-    """Synthesize text to audio (WAV for local/kokoro/piper; MP3 for ElevenLabs)."""
+    """Synthesize text to audio (WAV for local/kokoro/piper; MP3 for ElevenLabs).
+
+    Emits timing headers for the self-evaluating grid:
+      - ``X-Synth-Seconds``  — the ``tts.synthesize()`` call (model inference; for
+        cloud backends this includes the provider round-trip).
+      - ``X-Server-Seconds`` — total time inside this handler.
+      - ``X-Engine`` / ``X-Audio-Format``.
+    """
     from voicelab.tts.registry import get_tts_for_engine  # noqa: PLC0415
 
+    server_t0 = time.perf_counter()
     settings = get_settings()
     tts = get_tts_for_engine(body.engine, api_key=settings.elevenlabs_api_key)
+
+    synth_t0 = time.perf_counter()
     audio_bytes = tts.synthesize(
         body.text,
         body.voice,
         body.settings.model_dump(),
     )
+    synth_seconds = time.perf_counter() - synth_t0
+
     if audio_bytes is None:
         raise HTTPException(status_code=503, detail="Synthesis failed")
 
-    return StreamingResponse(
-        iter([audio_bytes]),
-        media_type=audio_media_type(tts),
-    )
+    media = audio_media_type(tts)
+    headers = {
+        "X-Synth-Seconds": f"{synth_seconds:.4f}",
+        "X-Server-Seconds": f"{time.perf_counter() - server_t0:.4f}",
+        "X-Engine": body.engine,
+        "X-Audio-Format": "wav" if media == "audio/wav" else "mp3",
+    }
+    return StreamingResponse(iter([audio_bytes]), media_type=media, headers=headers)
 
 
 # ---------------------------------------------------------------------------

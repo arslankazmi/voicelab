@@ -688,6 +688,8 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        # Let cross-origin clients read the grid's timing headers.
+        expose_headers=["X-Synth-Seconds", "X-Server-Seconds", "X-Engine", "X-Audio-Format"],
     )
 
     # Wire rate limiter (no-op stub if slowapi not installed)

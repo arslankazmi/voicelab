@@ -100,6 +100,20 @@ async def test_synthesize_returns_audio_local_fallback(client, local_tts_stub):
 
 
 @pytest.mark.asyncio
+async def test_synthesize_emits_timing_headers(client, local_tts_stub):
+    """The grid relies on numeric X-Synth-Seconds / X-Server-Seconds + X-Engine headers."""
+    resp = await client.post(
+        "/api/v1/synthesize",
+        json={"text": "Hello world", "voice": "default", "engine": "kokoro"},
+    )
+    assert resp.status_code == 200
+    assert float(resp.headers["x-synth-seconds"]) >= 0.0
+    assert float(resp.headers["x-server-seconds"]) >= 0.0
+    assert resp.headers["x-engine"] == "kokoro"
+    assert resp.headers["x-audio-format"] in ("wav", "mp3")
+
+
+@pytest.mark.asyncio
 async def test_synthesize_local_returns_wav_media_type(client, local_tts_stub):
     """Local backend (no ElevenLabs key) must advertise audio/wav, not audio/mpeg."""
     resp = await client.post(
